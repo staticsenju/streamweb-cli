@@ -36,13 +36,42 @@ async function prompt(question) {
 async function main() {
   try {
     const cookie = genCookie();
+    ensureHistoryFile()
+
+    const CONFIG_PATH = path.join(os.homedir(), '.animeweb_config.json');
+    function readConfig() {
+      try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {}; } catch { return {}; }
+    }
+    function writeConfig(cfg) {
+      try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8'); } catch (e) {}
+    }
+    let config = readConfig();
+    if (typeof config.autoplayAll !== 'boolean') config.autoplayAll = false;
+    if (typeof config.skipFillers !== 'boolean') config.skipFillers = false;
+
     console.log('1. Search & play an anime')
     console.log('2. View recently watched')
-    const menuChoice = await prompt('Choose an option (1-2): ')
+    console.log('3. Export history')
+    console.log('4. Clear history')
+    console.log('5. Settings')
+    const menuChoice = await prompt('Choose an option (1-5): ')
+    if (menuChoice.trim() === '5') {
+      while (true) {
+        config = readConfig();
+        console.log('\nSettings:')
+        console.log(`1. Autoplay all: ${config.autoplayAll ? 'ON' : 'OFF'}`)
+        console.log(`2. Skip all fillers: ${config.skipFillers ? 'ON' : 'OFF'}`)
+        console.log('3. Back to main menu')
+        const s = await prompt('Choose setting to toggle (1-2) or 3 to exit: ')
+        if (s.trim() === '1') { config.autoplayAll = !config.autoplayAll; writeConfig(config); console.log('Autoplay all set to', config.autoplayAll ? 'ON' : 'OFF') }
+        else if (s.trim() === '2') { config.skipFillers = !config.skipFillers; writeConfig(config); console.log('Skip all fillers set to', config.skipFillers ? 'ON' : 'OFF') }
+        else if (s.trim() === '3') break;
+      }
+      process.exit(0)
+    }
     if (menuChoice.trim() === '2') {
       let hist = readHistory()
       if (!hist.length) { console.log('No recently watched entries.'); process.exit(0) }
-      // dedupe by slug: keep the latest (highest ts) entry per show
       const bySlug = {}
       for (const h of hist) {
         if (!bySlug[h.slug] || (h.ts || 0) > (bySlug[h.slug].ts || 0)) bySlug[h.slug] = h
@@ -65,6 +94,21 @@ async function main() {
       process.exit(0)
     }
 
+    if (menuChoice.trim() === '3') {
+      const out = await prompt('Export history to file (path, or blank for ./anime_history_export.json): ')
+      const outPath = out.trim() || path.join(process.cwd(), 'anime_history_export.json')
+      try { exportHistory(outPath); console.log('History exported to', outPath) } catch (e) { console.error('Failed to export history:', e.message) }
+      process.exit(0)
+    }
+
+    if (menuChoice.trim() === '4') {
+      const confirm = (await prompt('Are you sure you want to clear history? This cannot be undone. (y/N): ')).toLowerCase()
+      if (confirm === 'y' || confirm === 'yes') {
+        try { clearHistory(); console.log('History cleared') } catch (e) { console.error('Failed to clear history:', e.message) }
+      } else console.log('Aborted')
+      process.exit(0)
+    }
+
     const searchQuery = await prompt('What anime do you want to search for? ');
     const results = await searchAnime(searchQuery, cookie);
     if (!results || !results.data || results.data.length === 0) {
@@ -81,21 +125,35 @@ async function main() {
     }
     const anime = results.data[animeIdx];
     const slug = anime.session || anime.id || anime.slug;
-    const episodes = await getAllEpisodes(slug, cookie);
+    let episodes = await getAllEpisodes(slug, cookie);
     if (!episodes || episodes.length === 0) {
       console.log('No episodes found.');
       process.exit(1);
     }
-    episodes.forEach((ep, idx) => {
-      console.log(`${idx + 1}. Episode ${ep.episode} - ${ep.title || ''}`);
+    let displayEpisodes = episodes;
+    if (config.skipFillers) {
+      displayEpisodes = episodes.filter(ep => !ep.filler);
+      if (!displayEpisodes.length) {
+        console.log('No non-filler episodes found.');
+        process.exit(1);
+      }
+    }
+    displayEpisodes.forEach((ep, idx) => {
+      let label = `${idx + 1}. Episode ${ep.episode}`;
+      if (ep.filler) label += ' (gfiller)';
+      if (ep.title) label += ` - ${ep.title}`;
+      console.log(label);
     });
     let epIdx = parseInt(await prompt('Select episode number: '), 10) - 1;
-    if (isNaN(epIdx) || epIdx < 0 || epIdx >= episodes.length) {
+    if (isNaN(epIdx) || epIdx < 0 || epIdx >= displayEpisodes.length) {
       console.log('Invalid episode selection.');
       process.exit(1);
     }
-    const episodeNum = episodes[epIdx].episode;
-    const playUrl = `${HOST}/play/${encodeURIComponent(slug)}/${episodes[epIdx].session}`;
+
+    const selectedEp = displayEpisodes[epIdx];
+    const origEpIdx = episodes.findIndex(e => e.episode == selectedEp.episode);
+    const episodeNum = selectedEp.episode;
+    const playUrl = `${HOST}/play/${encodeURIComponent(slug)}/${selectedEp.session}`;
     const html = await httpText(playUrl, { headers: { cookie, Referer: REFERER } });
     const $ = cheerio.load(html);
     const options = [];
@@ -116,14 +174,9 @@ async function main() {
       process.exit(1);
     }
     const { audio, resolution } = uniqueOptions[optIdx];
-    const m3u8 = await getEpisodeM3U8({ slug, episode: episodeNum, audio, resolution, cookie });
-    if (!m3u8) {
-      console.error('Could not find stream URL for this episode.');
-      process.exit(1);
-    }
-    const enableAutonext = (await prompt('Enable autonext for this play session? (y/N): ')).toLowerCase().startsWith('y')
+    const enableAutonext = config.autoplayAll;
     console.log(`Playing episode ${episodeNum} with audio: ${audio}, resolution: ${resolution}`);
-    await playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, title: anime.title, startAt: 0, autonext: enableAutonext })
+    await playEpisode({ slug, epIdx: origEpIdx, episodes: config.skipFillers ? displayEpisodes : episodes, audio, resolution, cookie, title: anime.title, startAt: 0, autonext: enableAutonext })
     process.exit(0)
   } catch (e) {
     console.error('Error:', e.message);
@@ -134,6 +187,8 @@ async function main() {
 if (require.main === module) {
   main();
 }
+
+module.exports = { getEpisodeM3U8, genCookie }
 
 async function httpGet(url, { headers = {}, signal } = {}) {
   const res = await fetch(url, { headers: mergeHeaders(headers), redirect: 'follow', signal })
@@ -240,6 +295,16 @@ async function getEpisodeM3U8({ slug, episode, audio, resolution, cookie }) {
 }
 
 const HISTORY_PATH = path.join(os.homedir(), '.animeweb_history.json')
+function ensureHistoryFile() {
+  try {
+    if (!fs.existsSync(HISTORY_PATH)) {
+      fs.writeFileSync(HISTORY_PATH, JSON.stringify([], null, 2), 'utf8')
+      if (process.platform !== 'win32') {
+        try { fs.chmodSync(HISTORY_PATH, 0o600) } catch (e) {}
+      }
+    }
+  } catch (e) {}
+}
 function readHistory() {
   try { const txt = fs.readFileSync(HISTORY_PATH, 'utf8'); return JSON.parse(txt) || [] } catch { return [] }
 }
@@ -252,6 +317,20 @@ function addHistoryEntry(entry) {
     filtered.unshift({ ...entry, ts: Date.now() })
     writeHistory(filtered.slice(0, 100))
   } catch (e) {}
+}
+
+function exportHistory(destPath) {
+  const arr = readHistory()
+  fs.writeFileSync(destPath, JSON.stringify(arr, null, 2), 'utf8')
+}
+
+function clearHistory() {
+  try {
+    writeHistory([])
+  } catch (e) {
+    try { fs.unlinkSync(HISTORY_PATH) } catch (e) {}
+    try { writeHistory([]) } catch (e) {}
+  }
 }
 
 async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, title, startAt = 0, autonext = false }) {
@@ -272,8 +351,10 @@ async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, t
       console.log(`Autoplaying next episode (ep ${episodeNum})  with audio: ${btn.audio}, resolution: ${btn.resolution}.`)
     }
 
-    const sockPath = path.join(os.tmpdir(), `animeweb-mpv-${process.pid}-${Date.now()}.sock`)
-    const args = [m3u8, `--input-ipc-server=${sockPath}`]
+  let sockPath
+  if (process.platform === 'win32') sockPath = `\\.\pipe\animeweb-mpv-${process.pid}-${Date.now()}`
+  else sockPath = path.join(os.tmpdir(), `animeweb-mpv-${process.pid}-${Date.now()}.sock`)
+  const args = [m3u8, `--input-ipc-server=${sockPath}`]
     if (startAt && Number(startAt) > 0) args.push(`--start=${Number(startAt)}`)
     const mpv = spawn('mpv', args, { stdio: ['ignore','ignore','ignore'] })
 
@@ -290,7 +371,12 @@ async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, t
           if (Date.now() - t0 > 5000) return res(false)
           setTimeout(tryOnce, 200)
         })
-        sock.connect({ path: sockPath }, () => res(true))
+        try {
+          sock.connect({ path: sockPath }, () => res(true))
+        } catch (e) {
+          if (Date.now() - t0 > 5000) return res(false)
+          setTimeout(tryOnce, 200)
+        }
       }
       tryOnce()
     })
@@ -303,10 +389,8 @@ async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, t
           for (const line of txt.split('\n').filter(Boolean)) {
             const obj = JSON.parse(line)
             if (obj && obj.request_id && obj.data != null && obj.request_id.startsWith) {
-              // noop
             }
             if (obj && obj.error === 'success' && obj.data != null) {
-              // response to get_property
               if (typeof obj.data === 'number') lastPos = obj.data
             }
           }
@@ -605,6 +689,28 @@ async function ensureTransmuxFull(m3u8Url, lang, reso) {
 
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 15 * 60 * 1000)
 const CLEAN_INTERVAL_MS = Number(process.env.CLEAN_INTERVAL_MS || 5 * 60 * 1000)
+const procs = new Map()
+const keyMeta = new Map()
+const keyRefs = new Map()
+const sessions = new Map()
+
+function cleanupKey(key) {
+  try {
+    const p = procs.get(key)
+    if (p) {
+      try { p.kill() } catch (e) {}
+      procs.delete(key)
+    }
+    const dir = path.join(CACHE_ROOT, key)
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) {}
+    keyMeta.delete(key)
+    keyRefs.delete(key)
+  } catch (e) {}
+}
+
+function endSession(sid) {
+  try { sessions.delete(sid) } catch (e) {}
+}
 setInterval(() => {
   const now = Date.now()
   for (const [key, meta] of keyMeta) {
@@ -617,4 +723,3 @@ setInterval(() => {
     if (now - (rec.lastSeen || 0) > CACHE_TTL_MS) endSession(sid)
   }
 }, CLEAN_INTERVAL_MS)
-
