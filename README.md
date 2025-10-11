@@ -31,3 +31,10 @@ You will be prompted to:
 - Select an episode
 - Select audio and resolution
 - The episode will play in mpv
+
+New features
+- View recently watched: the CLI now shows a main menu where you can choose to view recently watched entries saved in `~/.animeweb_history.json`.
+- Resume: choose a recently watched item to resume from the saved playback position.
+- Autonext: when starting playback you can enable 'autonext' to automatically play the next episode when the current one finishes.
+
+History is stored in JSON at `~/.animeweb_history.json` (up to 100 most recent entries). mpv is used for playback; for improved resume accuracy the tool uses mpv's IPC socket when available.

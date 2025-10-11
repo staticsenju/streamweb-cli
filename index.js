@@ -26,6 +26,7 @@ const REFERER = HOST;
 function genCookie() { return `__ddg2_=${crypto.randomBytes(12).toString('hex')}`; }
 
 const readline = require('readline');
+const net = require('net')
 
 async function prompt(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -35,6 +36,35 @@ async function prompt(question) {
 async function main() {
   try {
     const cookie = genCookie();
+    console.log('1. Search & play an anime')
+    console.log('2. View recently watched')
+    const menuChoice = await prompt('Choose an option (1-2): ')
+    if (menuChoice.trim() === '2') {
+      let hist = readHistory()
+      if (!hist.length) { console.log('No recently watched entries.'); process.exit(0) }
+      // dedupe by slug: keep the latest (highest ts) entry per show
+      const bySlug = {}
+      for (const h of hist) {
+        if (!bySlug[h.slug] || (h.ts || 0) > (bySlug[h.slug].ts || 0)) bySlug[h.slug] = h
+      }
+      const unique = Object.values(bySlug)
+      unique.forEach((h, i) => {
+        const t = new Date(h.ts).toLocaleString()
+        console.log(`${i + 1}. ${h.title} — ep ${h.episode} — ${h.audio}/${h.resolution} — ${t} — pos ${Math.round(h.position || 0)}s`)
+      })
+      const pick = parseInt(await prompt('Select entry to resume by number (or blank to exit): '), 10)
+      if (!isNaN(pick) && pick >= 1 && pick <= hist.length) {
+        const entry = hist[pick - 1]
+        const episodes = await getAllEpisodes(entry.slug, cookie)
+        const epIdx = episodes.findIndex(e => Number(e.episode) === Number(entry.episode))
+        if (epIdx === -1) { console.log('Episode not found anymore.'); process.exit(1) }
+        const { audio, resolution } = entry
+        await playEpisode({ slug: entry.slug, epIdx, episodes, audio, resolution, cookie, title: entry.title, startAt: entry.position || 0, autonext: false })
+        process.exit(0)
+      }
+      process.exit(0)
+    }
+
     const searchQuery = await prompt('What anime do you want to search for? ');
     const results = await searchAnime(searchQuery, cookie);
     if (!results || !results.data || results.data.length === 0) {
@@ -91,9 +121,10 @@ async function main() {
       console.error('Could not find stream URL for this episode.');
       process.exit(1);
     }
+    const enableAutonext = (await prompt('Enable autonext for this play session? (y/N): ')).toLowerCase().startsWith('y')
     console.log(`Playing episode ${episodeNum} with audio: ${audio}, resolution: ${resolution}`);
-    const mpv = spawn('mpv', [m3u8], { stdio: 'inherit' });
-    mpv.on('exit', (code) => process.exit(code));
+    await playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, title: anime.title, startAt: 0, autonext: enableAutonext })
+    process.exit(0)
   } catch (e) {
     console.error('Error:', e.message);
     process.exit(1);
@@ -207,6 +238,102 @@ async function getEpisodeM3U8({ slug, episode, audio, resolution, cookie }) {
   const m3u8 = parseSourceFromLogs(output)
   return m3u8
 }
+
+const HISTORY_PATH = path.join(os.homedir(), '.animeweb_history.json')
+function readHistory() {
+  try { const txt = fs.readFileSync(HISTORY_PATH, 'utf8'); return JSON.parse(txt) || [] } catch { return [] }
+}
+function writeHistory(arr) { try { fs.writeFileSync(HISTORY_PATH, JSON.stringify(arr, null, 2), 'utf8') } catch (e) {} }
+function addHistoryEntry(entry) {
+  try {
+    const arr = readHistory()
+    const key = `${entry.slug}::${entry.episode}`
+    const filtered = arr.filter(a => `${a.slug}::${a.episode}` !== key)
+    filtered.unshift({ ...entry, ts: Date.now() })
+    writeHistory(filtered.slice(0, 100))
+  } catch (e) {}
+}
+
+async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, title, startAt = 0, autonext = false }) {
+    let idx = epIdx
+    let playedOne = false
+  while (idx >= 0 && idx < episodes.length) {
+    const ep = episodes[idx]
+    const episodeNum = ep.episode
+    const playUrl = `${HOST}/play/${encodeURIComponent(slug)}/${ep.session}`
+    const html = await httpText(playUrl, { headers: { cookie, Referer: REFERER } })
+    const $ = cheerio.load(html)
+    const btn = pickButton($, { audio, resolution })
+    if (!btn) { console.error('Could not find stream URL for this episode.'); return }
+    const m3u8 = await getEpisodeM3U8({ slug, episode: episodeNum, audio: btn.audio, resolution: btn.resolution, cookie })
+    if (!m3u8) { console.error('Could not find stream URL for this episode.'); return }
+
+    if (playedOne && autonext) {
+      console.log(`Autoplaying next episode (ep ${episodeNum})  with audio: ${btn.audio}, resolution: ${btn.resolution}.`)
+    }
+
+    const sockPath = path.join(os.tmpdir(), `animeweb-mpv-${process.pid}-${Date.now()}.sock`)
+    const args = [m3u8, `--input-ipc-server=${sockPath}`]
+    if (startAt && Number(startAt) > 0) args.push(`--start=${Number(startAt)}`)
+    const mpv = spawn('mpv', args, { stdio: ['ignore','ignore','ignore'] })
+
+    let lastPos = Number(startAt) || 0
+    let reqId = 1
+    let sock = null
+    let closed = false
+
+    const tryConnect = () => new Promise(res => {
+      const t0 = Date.now()
+      const tryOnce = () => {
+        sock = new net.Socket()
+        sock.on('error', () => {
+          if (Date.now() - t0 > 5000) return res(false)
+          setTimeout(tryOnce, 200)
+        })
+        sock.connect({ path: sockPath }, () => res(true))
+      }
+      tryOnce()
+    })
+
+    const connected = await tryConnect()
+    if (connected && sock) {
+      sock.on('data', d => {
+        try {
+          const txt = d.toString('utf8')
+          for (const line of txt.split('\n').filter(Boolean)) {
+            const obj = JSON.parse(line)
+            if (obj && obj.request_id && obj.data != null && obj.request_id.startsWith) {
+              // noop
+            }
+            if (obj && obj.error === 'success' && obj.data != null) {
+              // response to get_property
+              if (typeof obj.data === 'number') lastPos = obj.data
+            }
+          }
+        } catch (e) {}
+      })
+
+      const poll = setInterval(() => {
+        try { sock.write(JSON.stringify({ command: ['get_property', 'time-pos'], request_id: String(reqId++) }) + '\n') } catch (e) {}
+      }, 2000)
+
+      await new Promise(resolve => mpv.on('exit', () => { clearInterval(poll); resolve() }))
+      closed = true
+      try { sock.end(); sock.destroy() } catch {}
+    } else {
+      await new Promise(resolve => mpv.on('exit', resolve))
+    }
+
+    addHistoryEntry({ title: title || '', slug, episode: episodeNum, session: ep.session, audio: btn.audio, resolution: btn.resolution, position: Math.round(lastPos || 0) })
+
+    if (!autonext) break
+    idx = idx + 1
+    playedOne = true
+    startAt = 0
+    await new Promise(r => setTimeout(r, 400))
+  }
+}
+
 
 function absUrl(u, base) {
   try {
