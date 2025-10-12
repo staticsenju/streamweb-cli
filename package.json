@@ -1,17 +1,24 @@
 {
-  "name": "animeweb-cli",
+  "name": "streamweb-cli",
   "version": "1.0.0",
-  "description": "An interactive CLI tool to search and play anime using mpv, with episode, audio, and resolution selection.",
+  "description": "Streamweb-CLI is a small interactive command-line tool that lets you search and stream (or download) anime, TV shows and movies from supported web sources.",
   "main": "index.js",
-  "private": true,
-  "scripts": {
-    "start": "node index.js"
+  "bin": {
+    "streamweb-cli": "./index.js"
   },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node .",
+    "test": "node . --help"
+  },
+  "keywords": ["anime", "cli", "streaming"],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "axios": "^1.12.2",
-    "cheerio": "^1.1.2",
-    "commander": "^14.0.1",
-    "crypto": "^1.0.1",
-    "express": "^4.21.2"
+    "axios": "^1.5.0",
+    "cheerio": "^1.0.0-rc.12",
+    "inquirer": "^9.2.7",
+    "open": "^9.0.0",
+    "m3u8-parser": "^4.1.0"
   }
 }
