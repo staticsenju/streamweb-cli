@@ -18,8 +18,8 @@ let selectedSubtitles = []
 let selectedUrl = null
 let contentType = null
 
-const HISTORY_PATH = path.join(os.homedir(), '.streamweb_history.json')
-const CONFIG_PATH = path.join(os.homedir(), '.streamweb_config.json')
+const HISTORY_PATH = path.join(__dirname, '..', '.streamweb_history.json')
+const CONFIG_PATH = path.join(__dirname, '..', '.streamweb_config.json')
 
 function ensureHistoryFile() {
   try {
@@ -278,7 +278,16 @@ async function provideData() {
     const ep = episodes[i]
     const [decoded, subs] = await decodeUrl(ep.file)
     const title = ep.episode_title || ep.movie_title || ep.label
-    await player.play(decoded, title, FLIXHQ_BASE_URL, subs)
+    const stopMode = await player.play(decoded, title, FLIXHQ_BASE_URL, subs)
+    if (stopMode === 'quit') {
+      cfg.autoplayNext = false
+      writeConfig(cfg)
+      return
+    }
+    if (stopMode === 'stop_only') {
+      cfg.autoplayNext = false
+      writeConfig(cfg)
+    }
     if (i < episodes.length - 1) {
       if (cfg.autoplayNext) continue
       const { cont } = await inquirer.prompt([{ name: 'cont', message: 'Continue to next episode? (y/n):' }])
