@@ -129,7 +129,7 @@ async function getEpisodeM3U8({ slug, episode, audio, resolution, cookie }) {
   return m3u8
 }
 
-const HISTORY_PATH = path.join(os.homedir(), '.streamweb_anime_history.json')
+const HISTORY_PATH = path.join(__dirname, '..', '.streamweb_anime_history.json')
 function ensureHistoryFile() {
   try {
     if (!fs.existsSync(HISTORY_PATH)) {
@@ -176,16 +176,59 @@ async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, t
     if (!m3u8) { console.error('Could not find stream URL for this episode.'); return }
 
     if (playedOne && autonext) {
-      console.log(`Autoplaying next episode (ep ${episodeNum})  with audio: ${btn.audio}, resolution: ${btn.resolution}.`)
+      console.log(`Autoplaying next episode (ep ${episodeNum})  with audio: ${btn.audio}, resolution: ${btn.resolution}. (Ctrl+W: stop autoplay and return to menu; Ctrl+O: stop autoplay only)`)
     }
 
     let sockPath
   if (process.platform === 'win32') sockPath = `\\.\pipe\streamweb-anime-mpv-${process.pid}-${Date.now()}`
   else sockPath = path.join(os.tmpdir(), `streamweb-anime-mpv-${process.pid}-${Date.now()}.sock`)
-    const args = [m3u8, `--input-ipc-server=${sockPath}`]
-    if (startAt && Number(startAt) > 0) args.push(`--start=${Number(startAt)}`)
-    const mpv = spawn('mpv', args, { stdio: ['ignore','ignore','ignore'] })
+    const inputConfPath = path.join(CACHE_ROOT, `streamweb-inputconf-${process.pid}-${Date.now()}.conf`)
+    try {
+      fs.writeFileSync(inputConfPath, `Ctrl+w print-text STREAMWEB:STOP_AUTOPLAY_AND_QUIT\nCtrl+o print-text STREAMWEB:STOP_AUTOPLAY_ONLY\n`, 'utf8')
+    } catch (e) {}
 
+    const args = [m3u8, `--input-ipc-server=${sockPath}`, `--input-conf=${inputConfPath}`, '--http-header-fields=Referer: https://kwik.cx/']
+    args.push('--fullscreen')
+    if (startAt && Number(startAt) > 0) args.push(`--start=${Number(startAt)}`)
+    const mpv = spawn('mpv', args, { stdio: ['ignore','pipe','pipe'] })
+
+    let userStopMode = null
+    if (mpv.stdout) mpv.stdout.on('data', d => {
+      try {
+        const txt = d.toString('utf8')
+        if (txt.includes('STREAMWEB:STOP_AUTOPLAY_AND_QUIT')) {
+          autonext = false
+          userStopMode = 'quit'
+          console.log('Stop autoplay requested — returning to menu (Ctrl+W)')
+          try {
+            if (sock) sock.write(JSON.stringify({ command: ['quit'] }) + '\n')
+            else mpv.kill()
+          } catch (e) {}
+        } else if (txt.includes('STREAMWEB:STOP_AUTOPLAY_ONLY')) {
+          autonext = false
+          userStopMode = 'stop_only'
+          console.log('Stop autoplay requested — autoplay disabled (Ctrl+O)')
+        }
+      } catch (e) {}
+    })
+    if (mpv.stderr) mpv.stderr.on('data', d => {
+      try {
+        const txt = d.toString('utf8')
+        if (txt.includes('STREAMWEB:STOP_AUTOPLAY_AND_QUIT')) {
+          autonext = false
+          userStopMode = 'quit'
+          console.log('Stop autoplay requested — returning to menu (Ctrl+W)')
+          try {
+            if (sock) sock.write(JSON.stringify({ command: ['quit'] }) + '\n')
+            else mpv.kill()
+          } catch (e) {}
+        } else if (txt.includes('STREAMWEB:STOP_AUTOPLAY_ONLY')) {
+          autonext = false
+          userStopMode = 'stop_only'
+          console.log('Stop autoplay requested — autoplay disabled (Ctrl+O)')
+        }
+      } catch (e) {}
+    })
     let lastPos = Number(startAt) || 0
     let reqId = 1
     let sock = null
@@ -226,6 +269,8 @@ async function playEpisode({ slug, epIdx, episodes, audio, resolution, cookie, t
     } else {
       await new Promise(resolve => mpv.on('exit', resolve))
     }
+
+    try { fs.unlinkSync(inputConfPath) } catch (e) {}
 
     addHistoryEntry({ title: title || '', slug, episode: episodeNum, session: ep.session, audio: btn.audio, resolution: btn.resolution, position: Math.round(lastPos || 0) })
 
@@ -353,7 +398,7 @@ async function main() {
   try {
     const cookie = genCookie()
     ensureHistoryFile()
-  const CONFIG_PATH = path.join(os.homedir(), '.streamweb_anime_config.json')
+  const CONFIG_PATH = path.join(__dirname, '..', '.streamweb_anime_config.json')
     function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {} } catch { return {} } }
     function writeConfig(cfg) { try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8') } catch (e) {} }
     let cfg = readConfig()
