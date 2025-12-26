@@ -64,15 +64,43 @@ fi
 if check_cmd yt-dlp; then
 	echo "yt-dlp found: $(yt-dlp --version)"
 else
-	echo "yt-dlp not found. Attempting to install yt-dlp (pip or curl)"
-	if check_cmd pip3; then
-		read -p "Install yt-dlp with pip3 --user? (y/N): " yn
-		if [[ "$yn" =~ ^[Yy]$ ]]; then pip3 install --user yt-dlp; fi
-	elif check_cmd curl; then
-		read -p "Download yt-dlp to /usr/local/bin (requires sudo)? (y/N): " yn
-		if [[ "$yn" =~ ^[Yy]$ ]]; then sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp; fi
+	echo "yt-dlp not found. Attempting to install yt-dlp using your system's package manager."
+	if check_cmd apt-get; then
+		read -p "Install yt-dlp with apt-get (requires sudo)? (y/N): " yn
+		if [[ "$yn" =~ ^[Yy]$ ]]; then sudo apt-get update && sudo apt-get install -y yt-dlp; fi
+	elif check_cmd pacman; then
+		read -p "Install yt-dlp with pacman (requires sudo)? (y/N): " yn
+		if [[ "$yn" =~ ^[Yy]$ ]]; then sudo pacman -S --noconfirm yt-dlp; fi
+	elif check_cmd dnf; then
+		read -p "Install yt-dlp with dnf (requires sudo)? (y/N): " yn
+		if [[ "$yn" =~ ^[Yy]$ ]]; then sudo dnf install -y yt-dlp; fi
+	elif check_cmd zypper; then
+		read -p "Install yt-dlp with zypper (requires sudo)? (y/N): " yn
+		if [[ "$yn" =~ ^[Yy]$ ]]; then sudo zypper install -y yt-dlp; fi
+	elif check_cmd brew; then
+		read -p "Install yt-dlp with brew? (y/N): " yn
+		if [[ "$yn" =~ ^[Yy]$ ]]; then brew install yt-dlp; fi
 	else
-		echo "No supported installer found. Please install yt-dlp or youtube-dl manually."; fi
+		echo "No supported package manager found. Trying pipx, pip, or direct download."
+		if check_cmd pipx; then
+			read -p "Install yt-dlp with pipx? (y/N): " yn
+			if [[ "$yn" =~ ^[Yy]$ ]]; then pipx install yt-dlp; fi
+		elif check_cmd pip3; then
+			read -p "Install yt-dlp with pip3 --user? (y/N): " yn
+			if [[ "$yn" =~ ^[Yy]$ ]]; then pip3 install --user yt-dlp || echo "pip3 install failed. See PEP 668 and consider using your system package manager or pipx."; fi
+		elif check_cmd curl; then
+			read -p "Download yt-dlp to /usr/local/bin (requires sudo)? (y/N): " yn
+			if [[ "$yn" =~ ^[Yy]$ ]]; then sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp; fi
+		else
+			echo "No supported installer found. Please install yt-dlp or youtube-dl manually.";
+		fi
+	fi
+	if check_cmd yt-dlp; then
+		echo "yt-dlp installed successfully: $(yt-dlp --version)"
+	else
+		echo "yt-dlp installation failed. Please install yt-dlp using your system's package manager (e.g., apt, pacman, dnf, zypper, brew) or pipx. See https://github.com/yt-dlp/yt-dlp/wiki/Installation for help."
+		exit 1
+	fi
 fi
 
 echo "Installing Node.js dependencies..."
