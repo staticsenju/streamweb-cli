@@ -6,6 +6,7 @@ const { spawn } = require('child_process')
 const os = require('os')
 const path = require('path')
 const fs = require('fs')
+const downloader = require('./downloader')
 const inquirer = (require('inquirer') && require('inquirer').default) ? require('inquirer').default : require('inquirer')
 
 const CACHE_ROOT = path.join(os.tmpdir(), 'ap-transmux')
@@ -404,9 +405,10 @@ async function main() {
     let cfg = readConfig()
     if (typeof cfg.autoplayAll !== 'boolean') cfg.autoplayAll = false
     if (typeof cfg.skipFillers !== 'boolean') cfg.skipFillers = false
+    if (typeof cfg.autoTranscode !== 'boolean') cfg.autoTranscode = false
 
     while (true) {
-      const choice = await inquirer.prompt([{ type: 'list', name: 'act', message: 'Anime menu', choices: ['Search & play an anime', 'View recently watched', 'Export history', 'Clear history', 'Settings', 'Return to main menu', 'Exit'] }])
+      const choice = await inquirer.prompt([{ type: 'list', name: 'act', message: 'Anime menu', choices: ['Search & play an anime', 'Download episodes', 'View recently watched', 'Export history', 'Clear history', 'Settings', 'Return to main menu', 'Exit'] }])
       const act = choice.act
       if (act === 'Return to main menu') return
       if (act === 'Exit') process.exit(0)
@@ -416,11 +418,13 @@ async function main() {
           console.log('\nSettings:')
           console.log(`1. Autoplay all: ${cfg.autoplayAll ? 'ON' : 'OFF'}`)
           console.log(`2. Skip all fillers: ${cfg.skipFillers ? 'ON' : 'OFF'}`)
-          console.log('3. Back to menu')
-          const s = await inquirer.prompt([{ name: 's', message: 'Toggle (1-2) or 3 to back:' }])
+          console.log(`3. Auto-transcode audio on download: ${cfg.autoTranscode ? 'ON' : 'OFF'}`)
+          console.log('4. Back to menu')
+          const s = await inquirer.prompt([{ name: 's', message: 'Toggle (1-3) or 4 to back:' }])
           const v = (s.s||'').trim()
           if (v === '1') { cfg.autoplayAll = !cfg.autoplayAll; writeConfig(cfg); console.log('Autoplay all set to', cfg.autoplayAll) }
           else if (v === '2') { cfg.skipFillers = !cfg.skipFillers; writeConfig(cfg); console.log('Skip fillers set to', cfg.skipFillers) }
+          else if (v === '3') { cfg.autoTranscode = !cfg.autoTranscode; writeConfig(cfg); console.log('Auto-transcode set to', cfg.autoTranscode) }
           else break
         }
         continue
@@ -452,7 +456,46 @@ async function main() {
         const episodes = await getAllEpisodes(entry.slug, cookie)
         const epIdx = episodes.findIndex(e => Number(e.episode) === Number(entry.episode))
         if (epIdx === -1) { console.log('Episode not found anymore.'); continue }
-        await playEpisode({ slug: entry.slug, epIdx, episodes, audio: entry.audio, resolution: entry.resolution, cookie, title: entry.title, startAt: entry.position || 0, autonext: false })
+        const cfg = readConfig()
+        await playEpisode({ slug: entry.slug, epIdx, episodes, audio: entry.audio, resolution: entry.resolution, cookie, title: entry.title, startAt: entry.position || 0, autonext: cfg.autoplayAll })
+        continue
+      }
+
+      if (act === 'Download episodes') {
+        const { q } = await inquirer.prompt([{ name: 'q', message: 'Search:' }])
+        const query = (q||'').trim()
+        if (!query) continue
+        const results = await searchAnime(query, cookie)
+        if (!results || !results.data || results.data.length === 0) { console.log('No results found.'); continue }
+        const choices = results.data.map((a, idx) => ({ name: `${idx+1}. ${a.title}`, value: a }))
+        const { anime } = await inquirer.prompt([{ type: 'list', name: 'anime', message: 'Select', choices, pageSize: Math.min(choices.length, cfg.pageSizeDefault || 20) }])
+        const slug = anime.session || anime.id || anime.slug
+        let episodes = await getAllEpisodes(slug, cookie)
+        if (!episodes || !episodes.length) { console.log('No episodes found.'); continue }
+        const epChoices = episodes.map((ep, i) => ({ name: `${i+1}. Episode ${ep.episode}${ep.filler ? ' (filler)' : ''}${ep.title ? ` - ${ep.title}` : ''}`, value: ep }))
+        const { selectedEp } = await inquirer.prompt([{ type: 'list', name: 'selectedEp', message: 'Select episode to download', choices: epChoices, pageSize: Math.min(epChoices.length, cfg.pageSizeDefault || 20) }])
+        const origEpIdx = episodes.findIndex(e => e.episode == selectedEp.episode)
+        const playUrl = `${HOST}/play/${encodeURIComponent(slug)}/${selectedEp.session}`
+        const html = await httpText(playUrl, { headers: { cookie, Referer: REFERER } })
+        const $ = cheerio.load(html)
+        const opts = []
+        $('button[data-src]').each((_, el) => { const e = $(el); opts.push({ audio: (e.attr('data-audio')||'').toLowerCase(), resolution: e.attr('data-resolution')||'', session: e.attr('data-src')||'' }) })
+        const uniq = Array.from(new Map(opts.map(o => [`${o.audio}|${o.resolution}`, o])).values())
+        const optChoices = uniq.map((o, i) => ({ name: `${i+1}. Audio: ${o.audio} Resolution: ${o.resolution}`, value: o }))
+        const { opt } = await inquirer.prompt([{ type: 'list', name: 'opt', message: 'Select audio/resolution', choices: optChoices, pageSize: Math.min(optChoices.length, cfg.pageSizeDefault || 20) }])
+        console.log(`Downloading episode ${selectedEp.episode} with audio: ${opt.audio}, resolution: ${opt.resolution}`)
+        const m3u8 = await getEpisodeM3U8({ slug, episode: selectedEp.episode, audio: opt.audio, resolution: opt.resolution, cookie })
+        if (!m3u8) { console.log('Could not find stream URL for this episode.'); continue }
+        try {
+          const dest = path.join(process.cwd(), 'downloads')
+          let refer = REFERER
+          try { if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(m3u8)) refer = 'https://kwik.cx' } catch (e) {}
+          const rawTitle = (anime && anime.title) ? anime.title : slug
+          const safeTitle = rawTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
+          const fileName = `${safeTitle}_E${String(selectedEp.episode).padStart(2,'0')}`
+          await downloader.download(dest, fileName, m3u8, refer, { recodeAudio: cfg.autoTranscode })
+          console.log('Download complete — saved as', fileName + '.mp4')
+        } catch (e) { console.error('Download failed:', e.message || e) }
         continue
       }
       if (act === 'Search & play an anime') {
@@ -462,14 +505,14 @@ async function main() {
         const results = await searchAnime(query, cookie)
         if (!results || !results.data || results.data.length === 0) { console.log('No results found.'); continue }
         const choices = results.data.map((a, idx) => ({ name: `${idx+1}. ${a.title}`, value: a }))
-        const { anime } = await inquirer.prompt([{ type: 'list', name: 'anime', message: 'Select', choices, pageSize: Math.min(choices.length, 50) }])
+        const { anime } = await inquirer.prompt([{ type: 'list', name: 'anime', message: 'Select', choices, pageSize: Math.min(choices.length, cfg.pageSizeDefault || 20) }])
         const slug = anime.session || anime.id || anime.slug
         let episodes = await getAllEpisodes(slug, cookie)
         if (!episodes || !episodes.length) { console.log('No episodes found.'); continue }
         let displayEpisodes = episodes
         if (cfg.skipFillers) { displayEpisodes = episodes.filter(ep => !ep.filler); if (!displayEpisodes.length) { console.log('No non-filler episodes found.'); continue } }
         const epChoices = displayEpisodes.map((ep, i) => ({ name: `${i+1}. Episode ${ep.episode}${ep.filler ? ' (filler)' : ''}${ep.title ? ` - ${ep.title}` : ''}`, value: ep }))
-        const { selectedEp } = await inquirer.prompt([{ type: 'list', name: 'selectedEp', message: 'Select episode', choices: epChoices, pageSize: Math.min(epChoices.length, 200) }])
+        const { selectedEp } = await inquirer.prompt([{ type: 'list', name: 'selectedEp', message: 'Select episode', choices: epChoices, pageSize: Math.min(epChoices.length, cfg.pageSizeDefault || 20) }])
         const origEpIdx = episodes.findIndex(e => e.episode == selectedEp.episode)
         const playUrl = `${HOST}/play/${encodeURIComponent(slug)}/${selectedEp.session}`
         const html = await httpText(playUrl, { headers: { cookie, Referer: REFERER } })
@@ -478,7 +521,7 @@ async function main() {
         $('button[data-src]').each((_, el) => { const e = $(el); opts.push({ audio: (e.attr('data-audio')||'').toLowerCase(), resolution: e.attr('data-resolution')||'', session: e.attr('data-src')||'' }) })
         const uniq = Array.from(new Map(opts.map(o => [`${o.audio}|${o.resolution}`, o])).values())
         const optChoices = uniq.map((o, i) => ({ name: `${i+1}. Audio: ${o.audio} Resolution: ${o.resolution}`, value: o }))
-        const { opt } = await inquirer.prompt([{ type: 'list', name: 'opt', message: 'Select audio/resolution', choices: optChoices, pageSize: Math.min(optChoices.length, 20) }])
+        const { opt } = await inquirer.prompt([{ type: 'list', name: 'opt', message: 'Select audio/resolution', choices: optChoices, pageSize: Math.min(optChoices.length, cfg.pageSizeDefault || 20) }])
         console.log(`Playing episode ${selectedEp.episode} with audio: ${opt.audio}, resolution: ${opt.resolution}`)
         await playEpisode({ slug, epIdx: origEpIdx, episodes: cfg.skipFillers ? displayEpisodes : episodes, audio: opt.audio, resolution: opt.resolution, cookie, title: anime.title, startAt: 0, autonext: cfg.autoplayAll })
       }
@@ -486,4 +529,4 @@ async function main() {
   } catch (e) { console.error('Anime CLI error:', e.message || e) }
 }
 
-module.exports = { main, getEpisodeM3U8, genCookie, ensureHistoryFile, readHistory, exportHistory, clearHistory }
+module.exports = { main, getEpisodeM3U8, genCookie, ensureHistoryFile, readHistory, exportHistory, clearHistory, searchAnime, getAllEpisodes }
