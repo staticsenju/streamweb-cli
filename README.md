@@ -21,10 +21,45 @@ cd streamweb-cli
 npm install
 ```
 
-You can run the CLI directly with:
+
+## CLI Usage
+
+You can run the main CLI:
 
 ```bash
-node .
+streamweb-cli
+```
+
+Or use the downloader directly:
+
+```bash
+dl [options]
+```
+
+### dl CLI options
+
+```
+dl --anime           Download anime (interactive)
+	--all              Download all episodes (batch)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory
+dl --tv, --series    Download TV series (interactive)
+	--all              Download all seasons/episodes
+	--season <n>       Download only season n (repeatable)
+	--ep <n>           Download only episode n (repeatable)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory
+dl --movie, -m       Download a movie (interactive)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory
+```
+
+Examples:
+
+```bash
+dl --anime --all --out "./downloads"
+dl --tv --season 2 --ep 5 --out "./tv"
+dl --movie --aac
 ```
 
 ## Usage notes & tips
