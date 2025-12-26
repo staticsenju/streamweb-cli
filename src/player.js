@@ -13,11 +13,16 @@ async function play(url, title, base, subs) {
       for (const s of subs) args.push(`--sub-file=${s}`)
     }
     args.push('--fullscreen')
-    args.push(url)
+    let sockPath
+    if (process.platform === 'win32') sockPath = `\\.\pipe\streamweb-mpv-${process.pid}-${Date.now()}`
+    else sockPath = path.join(os.tmpdir(), `streamweb-mpv-${process.pid}-${Date.now()}.sock`)
 
     const inputConfPath = path.join(os.tmpdir(), `streamweb-inputconf-${process.pid}-${Date.now()}.conf`)
     try { fs.writeFileSync(inputConfPath, `Ctrl+w print-text STREAMWEB:STOP_AUTOPLAY_AND_QUIT\nCtrl+o print-text STREAMWEB:STOP_AUTOPLAY_ONLY\n`, 'utf8') } catch (e) {}
+
     args.unshift(`--input-conf=${inputConfPath}`)
+    args.unshift(`--input-ipc-server=${sockPath}`)
+    args.push(url)
 
     const mpv = child_process.spawn('mpv', args, { stdio: ['ignore','pipe','pipe'] })
 
@@ -56,14 +61,51 @@ async function play(url, title, base, subs) {
       }
     })
 
-    const exitCode = await new Promise((resolve) => mpv.on('close', resolve))
-    if (exitCode !== 0 && !handledError) {
-      console.log(`mpv exited with code ${exitCode}, falling back to system opener`)
-      await open(url)
+    let lastPos = 0
+    let reqId = 1
+    let sock = null
+    const tryConnect = () => new Promise(res => {
+      const t0 = Date.now()
+      const tryOnce = () => {
+        sock = new (require('net').Socket)()
+        sock.on('error', () => {
+          if (Date.now() - t0 > 5000) return res(false)
+          setTimeout(tryOnce, 200)
+        })
+        try { sock.connect({ path: sockPath }, () => res(true)) } catch (e) { if (Date.now() - t0 > 5000) return res(false); setTimeout(tryOnce, 200) }
+      }
+      tryOnce()
+    })
+
+    const connected = await tryConnect()
+    let poll = null
+    if (connected && sock) {
+      sock.on('data', d => {
+        try {
+          const txt = d.toString('utf8')
+          for (const line of txt.split('\n').filter(Boolean)) {
+            const obj = JSON.parse(line)
+            if (obj && obj.error === 'success' && obj.data != null) {
+              if (typeof obj.data === 'number') lastPos = obj.data
+            }
+          }
+        } catch (e) {}
+      })
+      poll = setInterval(() => { try { sock.write(JSON.stringify({ command: ['get_property', 'time-pos'], request_id: String(reqId++) }) + '\n') } catch (e) {} }, 2000)
     }
+
+    await new Promise(resolve => mpv.on('exit', resolve))
+
+    if (poll) clearInterval(poll)
+    try { if (sock) { sock.end(); sock.destroy() } } catch (e) {}
+
     try { fs.unlinkSync(inputConfPath) } catch (e) {}
-    return userStopMode
-  } catch (err) { try { await open(url) } catch {} ; return null }
+    if (!handledError && mpv.exitCode !== 0) {
+      console.log(`mpv exited with code ${mpv.exitCode}, falling back to system opener`)
+      try { await open(url) } catch (e) {}
+    }
+    return { stopMode: userStopMode, position: Math.round(lastPos || 0) }
+  } catch (err) { try { await open(url) } catch {} ; return { stopMode: null, position: 0 } }
 }
 
 module.exports = { play }
