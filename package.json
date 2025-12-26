@@ -4,7 +4,8 @@
   "description": "Streamweb-CLI is a small interactive command-line tool that lets you search and stream (or download) anime, TV shows and movies from supported web sources.",
   "main": "index.js",
   "bin": {
-    "streamweb-cli": "./index.js"
+    "streamweb-cli": "./index.js",
+    "dl": "./dl.js"
   },
   "type": "commonjs",
   "scripts": {
