@@ -59,6 +59,9 @@ function writeConfig(cfg) { try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(c
 try { ensureHistoryFile() } catch (e) {}
 const _cfg = readConfig()
 if (typeof _cfg.autoplayNext !== 'boolean') _cfg.autoplayNext = false
+if (typeof _cfg.autoTranscode !== 'boolean') _cfg.autoTranscode = false
+if (typeof _cfg.downloadPath !== 'string') _cfg.downloadPath = ''
+if (typeof _cfg.pageSizeDefault !== 'number') _cfg.pageSizeDefault = 20
 writeConfig(_cfg)
 
 async function searchContent(query) {
@@ -83,7 +86,9 @@ async function searchContent(query) {
     results.push(display)
     urls.push(new URL(poster.attr('href') || '', FLIXHQ_BASE_URL).toString())
   })
-  const choice = await inquirer.prompt([{ type: 'list', name: 'sel', message: 'Select', choices: results, pageSize: results.length }])
+  const cfg = readConfig()
+  const pageSize = Math.min(results.length, (cfg.pageSizeDefault || 20))
+  const choice = await inquirer.prompt([{ type: 'list', name: 'sel', message: 'Select', choices: results, pageSize }])
   const idx = results.indexOf(choice.sel)
   return urls[idx]
 }
@@ -134,13 +139,17 @@ async function series() {
   if (!seasons.length) throw new Error('Could not get seasons')
   
   const seasonChoices = seasons.map((s, i) => ({ name: `${i+1}. ${s.title}`, value: i }))
-  const { seasonIdx } = await inquirer.prompt([{ type: 'list', name: 'seasonIdx', message: 'Select season:', choices: seasonChoices, pageSize: seasonChoices.length }])
+  const scfg = readConfig()
+  const seasonPage = Math.min(seasonChoices.length, (scfg.pageSizeDefault || 20))
+  const { seasonIdx } = await inquirer.prompt([{ type: 'list', name: 'seasonIdx', message: 'Select season:', choices: seasonChoices, pageSize: seasonPage }])
   const seasonNum = seasonIdx + 1
   const targetSeasonId = seasons[seasonIdx].id
   const episodes = await getSeasonEpisodes(targetSeasonId)
   if (!episodes.length) throw new Error(`Could not get episodes for season ${seasonNum}`)
   const episodeChoices = episodes.map((ep, i) => ({ name: `${i+1}. ${ep.title || `Episode ${i+1}`}`, value: i }))
-  const { epSelect } = await inquirer.prompt([{ type: 'list', name: 'epSelect', message: 'Select episode (or choose Range)', choices: [...episodeChoices, { name: 'Enter a range (e.g. 5-7)', value: 'range' }], pageSize: Math.min(episodeChoices.length + 1, 100) }])
+  const ecfg = readConfig()
+  const epPage = Math.min(episodeChoices.length + 1, (ecfg.pageSizeDefault || 20))
+  const { epSelect } = await inquirer.prompt([{ type: 'list', name: 'epSelect', message: 'Select episode (or choose Range)', choices: [...episodeChoices, { name: 'Enter a range (e.g. 5-7)', value: 'range' }], pageSize: epPage }])
   let episode = null
   if (epSelect === 'range') {
     const resp = await inquirer.prompt([{ name: 'episode', message: "Enter episode (e.g., '5' or '5-7')" }])
@@ -253,19 +262,29 @@ function determinePath() {
   const os = require('os')
   const plt = os.platform()
   const user = os.userInfo().username
+  try {
+    const cfg = readConfig()
+    if (cfg && cfg.downloadPath && String(cfg.downloadPath).trim()) return String(cfg.downloadPath).trim()
+  } catch (e) {}
   if (plt === 'win32') return `C://Users//${user}//Downloads`
   if (plt === 'darwin') return `/Users/${user}/Downloads`
   return `/home/${user}/Downloads`
 }
 
-async function dlData(path = determinePath(), query = 'download') {
+async function dlData(dest = null, query = 'download') {
   if (!selectedMedia) { console.log('No media selected for download'); return }
   const episodes = Array.isArray(selectedMedia) ? selectedMedia : [selectedMedia]
+  const cfg = readConfig()
+  const basePath = dest || (cfg && cfg.downloadPath ? cfg.downloadPath : determinePath())
   for (let i = 0; i < episodes.length; i++) {
     const ep = episodes[i]
     const [decoded, subs] = await decodeUrl(ep.file)
     const name = ep.season ? `${query}_S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}` : `${query}_Episode_${i+1}`
-    await downloader.download(path, name, decoded, FLIXHQ_BASE_URL)
+    let referer = FLIXHQ_BASE_URL
+    try {
+      if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(decoded)) referer = 'https://kwik.cx'
+    } catch (e) {}
+    await downloader.download(basePath, name, decoded, referer, { recodeAudio: cfg && cfg.autoTranscode })
     console.log(`Successfully downloaded: ${ep.label}`)
   }
 }
@@ -278,10 +297,13 @@ async function provideData() {
     const ep = episodes[i]
     const [decoded, subs] = await decodeUrl(ep.file)
     const title = ep.episode_title || ep.movie_title || ep.label
-    const stopMode = await player.play(decoded, title, FLIXHQ_BASE_URL, subs)
+    const res = await player.play(decoded, title, FLIXHQ_BASE_URL, subs)
+    const stopMode = res && res.stopMode ? res.stopMode : null
+    const position = res && typeof res.position === 'number' ? Math.round(res.position) : 0
     if (stopMode === 'quit') {
       cfg.autoplayNext = false
       writeConfig(cfg)
+      try { addHistoryEntry({ title, url: selectedUrl, season: ep.season, episode: ep.episode, label: ep.label, position }) } catch (e) {}
       return
     }
     if (stopMode === 'stop_only') {
@@ -293,7 +315,7 @@ async function provideData() {
       const { cont } = await inquirer.prompt([{ name: 'cont', message: 'Continue to next episode? (y/n):' }])
       if (!['y','yes',''].includes((cont||'').toLowerCase())) break
     }
-  try { addHistoryEntry({ title, url: selectedUrl, season: ep.season, episode: ep.episode, label: ep.label }) } catch (e) {}
+  try { addHistoryEntry({ title, url: selectedUrl, season: ep.season, episode: ep.episode, label: ep.label, position }) } catch (e) {}
   }
 }
 
@@ -361,11 +383,29 @@ async function viewRecentlyWatched() {
 
 async function showSettingsMenu() {
   const cfg = readConfig()
-  console.log('\nSettings:')
-  console.log(`1. Autoplay next: ${cfg.autoplayNext ? 'ON' : 'OFF'}`)
-  const { choice } = await inquirer.prompt([{ name: 'choice', message: 'Toggle settings? Enter 1 to toggle autoplay, or blank to return:' }])
-  if (!choice) return
-  if (choice.trim() === '1') { cfg.autoplayNext = !cfg.autoplayNext; writeConfig(cfg); console.log('Autoplay next set to', cfg.autoplayNext ? 'ON' : 'OFF') }
+  while (true) {
+    console.log('\nSettings:')
+    console.log(`1. Autoplay next: ${cfg.autoplayNext ? 'ON' : 'OFF'}`)
+    console.log(`2. Auto-transcode downloaded audio: ${cfg.autoTranscode ? 'ON' : 'OFF'}`)
+    console.log(`3. Download path: ${cfg.downloadPath || '(default)'}`)
+    console.log(`4. Inquirer page size: ${cfg.pageSizeDefault || 20}`)
+    console.log('5. Back')
+    const { choice } = await inquirer.prompt([{ name: 'choice', message: 'Enter number to toggle/change:' }])
+    if (!choice) return
+    const v = (choice||'').trim()
+    if (v === '1') { cfg.autoplayNext = !cfg.autoplayNext; writeConfig(cfg); console.log('Autoplay next set to', cfg.autoplayNext ? 'ON' : 'OFF') }
+    else if (v === '2') { cfg.autoTranscode = !cfg.autoTranscode; writeConfig(cfg); console.log('Auto-transcode set to', cfg.autoTranscode ? 'ON' : 'OFF') }
+    else if (v === '3') {
+      const { path: newPath } = await inquirer.prompt([{ name: 'path', message: 'Enter download path (leave blank to clear):' }])
+      cfg.downloadPath = (newPath || '').trim()
+      writeConfig(cfg)
+      console.log('Download path set to', cfg.downloadPath || '(default)')
+    } else if (v === '4') {
+      const { p } = await inquirer.prompt([{ name: 'p', message: 'Enter page size (number):' }])
+      const n = parseInt((p||'').trim(), 10)
+      if (!Number.isNaN(n) && n > 0) { cfg.pageSizeDefault = n; writeConfig(cfg); console.log('Page size set to', n) } else console.log('Invalid number')
+    } else return
+  }
 }
 
-module.exports = { getId, poison, init, dlData, provideData, viewRecentlyWatched, exportHistory, clearHistory, showSettingsMenu }
+module.exports = { getId, poison, init, dlData, provideData, viewRecentlyWatched, exportHistory, clearHistory, showSettingsMenu, searchContent, getTvSeasons, getSeasonEpisodes, getEpisodeData, readConfig, determinePath }
