@@ -27,13 +27,13 @@ npm install
 You can run the main CLI:
 
 ```bash
-node .
+node . || streamweb-cli
 ```
 
 Or use the downloader directly:
 
 ```bash
-node dl.js [options]
+node dl.js [options] || dl [options]
 ```
 
 ### dl CLI options
