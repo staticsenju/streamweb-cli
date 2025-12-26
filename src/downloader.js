@@ -1,4 +1,4 @@
-  function sanitizeName(name) {
+function sanitizeName(name) {
   return String(name).replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '');
 }
 const fs = require('fs')
