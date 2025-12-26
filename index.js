@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const inquirer = (require('inquirer') && require('inquirer').default) ? require('inquirer').default : require('inquirer')
 async function mainMenu() {
   while (true) {
