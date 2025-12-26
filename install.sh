@@ -95,6 +95,7 @@ else
 			echo "No supported installer found. Please install yt-dlp or youtube-dl manually.";
 		fi
 	fi
+	# Final check
 	if check_cmd yt-dlp; then
 		echo "yt-dlp installed successfully: $(yt-dlp --version)"
 	else
@@ -106,8 +107,14 @@ fi
 echo "Installing Node.js dependencies..."
 npm install
 
-echo "Linking package globally (requires npm permissions)..."
-npm link
+
+echo "Installing package globally (requires npm permissions)..."
+if npm install -g .; then
+	echo "Global install succeeded. You can now run 'streamweb-cli' from anywhere."
+else
+	echo "Global install failed. Try running this script with elevated permissions (sudo) or check your npm configuration."
+	exit 1
+fi
 
 echo "If this script added Node or other tools to your shell profile, please restart your terminal to pick up PATH changes."
 detected_shell="unknown"
