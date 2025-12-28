@@ -27,18 +27,15 @@ npm install
 You can run the main CLI:
 
 ```bash
-node . || streamweb-cli
+streamweb-cli
 ```
 
 Or use the downloader directly:
 
 ```bash
-node dl.js [options] || dl [options]
+dl [options]
 ```
 
-### dl CLI options
-
-```
 dl --anime           Download anime (interactive)
 	--all              Download all episodes (batch)
 	--aac              Re-encode audio to AAC
@@ -52,12 +49,39 @@ dl --tv, --series    Download TV series (interactive)
 dl --movie, -m       Download a movie (interactive)
 	--aac              Re-encode audio to AAC
 	--out <dir>        Output directory
+dl --anime --all --out "./downloads"
+### dl CLI options
+
+```
+dl --anime           Download anime (interactive)
+	--all              Download all episodes (batch)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory (default: ./downloads)
+	--f, --folder      Organize downloads into a folder named after the anime, with filenames like E05-Episode-Title.mp4
+dl --tv, --series    Download TV series (interactive)
+	--all              Download all seasons/episodes
+	--season <n>       Download only season n (repeatable)
+	--ep <n>           Download only episode n (repeatable)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory (default: ./downloads)
+	--f, --folder      Organize downloads into a folder named after the show, with filenames like E05-Episode-Title.mp4
+dl --movie, -m       Download a movie (interactive)
+	--aac              Re-encode audio to AAC
+	--out <dir>        Output directory (default: ./downloads)
+	--f, --folder      Organize download into a folder named after the movie
 ```
 
 Examples:
 
 ```bash
-dl --anime --all --out "./downloads"
+dl --anime --all --out "./downloads" --folder
+dl --tv --season 2 --ep 5 --out "./tv" --folder
+dl --movie --aac --folder
+## Output directory and filenames
+
+- If --out is not specified, downloads go to ./downloads by default.
+- With --folder, files are placed in a folder named after the show/movie/anime. Filenames are E{num}-{title}.mp4 if the episode/movie title is available, or just E{num}.mp4 otherwise. No show or season is included in the filename when --folder is used.
+
 dl --tv --season 2 --ep 5 --out "./tv"
 dl --movie --aac
 ```
