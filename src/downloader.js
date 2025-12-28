@@ -61,7 +61,7 @@ async function download(destPath, name, url, referer, opts = {}) {
         const res = await axios.get(subUrl, { responseType: 'arraybuffer' });
         fs.writeFileSync(subPath, res.data);
         subtitleFiles.push(subPath);
-      } catch (e) { /* ignore subtitle download errors */ }
+      } catch (e) { }
     }
   }
 
@@ -88,7 +88,6 @@ async function download(destPath, name, url, referer, opts = {}) {
   })()
 
   if (useYtdlp) {
-    // yt-dlp may handle subtitles, but we handle muxing after download
     return await new Promise((resolve, reject) => {
       const args = ['-o', outFile, url, '--no-part', '--newline', '--concurrent-fragments', '64', '--fragment-retries', '10', '--retries', '10', '--socket-timeout', '60']
       if (referer) {
@@ -181,12 +180,28 @@ async function download(destPath, name, url, referer, opts = {}) {
           });
         } catch (e) {}
         if (code === 0) {
+          if (subtitleFiles.length) {
+            try {
+              const muxedFile = outFile.replace(/\.mp4$/, '.muxed.mp4');
+              const ffmpegArgs = ['-y', '-i', outFile];
+              subtitleFiles.forEach(sub => ffmpegArgs.push('-i', sub));
+              ffmpegArgs.push('-map', '0:v', '-map', '0:a?');
+              for (let i = 0; i < subtitleFiles.length; i++) ffmpegArgs.push('-map', `${i+1}:0`);
+              ffmpegArgs.push('-c', 'copy', '-c:s', 'mov_text');
+              for (let i = 0; i < subtitleFiles.length; i++) ffmpegArgs.push(`-metadata:s:s:${i}`, `language=und`);
+              ffmpegArgs.push(muxedFile);
+              const rc = spawnSync(FFMPEG_EXECUTABLE, ffmpegArgs, { stdio: 'ignore' });
+              if (rc.status === 0 && fs.existsSync(muxedFile)) {
+                try { fs.renameSync(muxedFile, outFile); } catch (e) {}
+              }
+            } catch (e) { }
+          }
           if (recodeAudio) {
             try {
               const tmp = outFile + '.recode.tmp.mp4';
               const rc = spawnSync(FFMPEG_EXECUTABLE, ['-y', '-hide_banner', '-loglevel', 'error', '-i', outFile, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', tmp], { stdio: 'ignore' });
               if (rc.status === 0) {
-                try { fs.renameSync(tmp, outFile); } catch (e) { /* ignore */ }
+                try { fs.renameSync(tmp, outFile); } catch (e) {}
               } else {
                 try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) {}
               }
@@ -271,25 +286,19 @@ async function download(destPath, name, url, referer, opts = {}) {
           try {
             const muxedFile = outFile.replace(/\.mp4$/, '.muxed.mp4');
             const ffmpegArgs = ['-y', '-i', outFile];
-            subtitleFiles.forEach(sub => {
-              ffmpegArgs.push('-i', sub);
-            });
+            subtitleFiles.forEach(sub => { ffmpegArgs.push('-i', sub); });
             ffmpegArgs.push('-map', '0:v', '-map', '0:a?');
-            for (let i = 0; i < subtitleFiles.length; i++) {
-              ffmpegArgs.push('-map', `${i+1}:0`);
-            }
+            for (let i = 0; i < subtitleFiles.length; i++) ffmpegArgs.push('-map', `${i+1}:0`);
             ffmpegArgs.push('-c', 'copy');
             ffmpegArgs.push('-c:s', 'mov_text');
-            for (let i = 0; i < subtitleFiles.length; i++) {
-              ffmpegArgs.push(`-metadata:s:s:${i}`, `language=und`);
-            }
+            for (let i = 0; i < subtitleFiles.length; i++) ffmpegArgs.push(`-metadata:s:s:${i}`, `language=und`);
             ffmpegArgs.push(muxedFile);
             const rc = spawnSync(FFMPEG_EXECUTABLE, ffmpegArgs, { stdio: 'ignore' });
             if (rc.status === 0 && fs.existsSync(muxedFile)) {
               try { fs.renameSync(muxedFile, outFile); } catch (e) {}
               finalOutFile = outFile;
             }
-          } catch (e) { /* ignore mux errors */ }
+          } catch (e) { }
         }
         if (recodeAudio) {
           try {
@@ -303,11 +312,13 @@ async function download(destPath, name, url, referer, opts = {}) {
           } catch (e) {}
         }
         try { cleanTempFilesFor(outFile) } catch (e) {}
+        
         for (const sub of subtitleFiles) {
           try { fs.unlinkSync(sub); } catch (e) {}
         }
         resolve(finalOutFile)
       } else {
+        
         for (const sub of subtitleFiles) {
           try { fs.unlinkSync(sub); } catch (e) {}
         }
