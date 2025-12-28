@@ -284,7 +284,10 @@ async function dlData(dest = null, query = 'download') {
     try {
       if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(decoded)) referer = 'https://kwik.cx'
     } catch (e) {}
-    await downloader.download(basePath, name, decoded, referer, { recodeAudio: cfg && cfg.autoTranscode })
+    await downloader.download(basePath, name, decoded, referer, { 
+      recodeAudio: cfg && cfg.autoTranscode,
+      subtitles: subs
+    })
     console.log(`Successfully downloaded: ${ep.label}`)
   }
 }
