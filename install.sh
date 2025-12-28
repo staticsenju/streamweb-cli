@@ -3,7 +3,6 @@ set -e
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-
 is_termux=false
 if [ -n "$PREFIX" ] && [[ "$PREFIX" == *com.termux* || "$PREFIX" == "/data/data/com.termux"* ]]; then
 	is_termux=true
