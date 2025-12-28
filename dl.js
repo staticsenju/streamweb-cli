@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+function isTermux() {
+  return !!process.env.PREFIX && process.env.PREFIX.includes('/data/data/com.termux');
+}
 const inquirer = (require('inquirer') && require('inquirer').default) ? require('inquirer').default : require('inquirer')
 const path = require('path')
 const fs = require('fs')
@@ -22,6 +25,8 @@ function parseArgs() {
       if ((k === 'season' || k === 'episode')) {
         if (!flags[k]) flags[k] = [];
         if (next && !next.startsWith('--')) { flags[k].push(next); i++; } else { flags[k].push(true); }
+      } else if (k === 'f' || k === 'folder') {
+        flags.folder = true;
       } else if (next && !next.startsWith('--')) { flags[k] = next; i++ } else { flags[k] = true }
     }
   }
@@ -37,6 +42,7 @@ function updateLine(idx, text, anime, episodeList) {
   process.stdout.write(`\x1b8`);
 }
 async function animeFlow(flags) {
+  const termux = isTermux();
   const cookie = animeMod.genCookie()
   const { q } = await inquirer.prompt([{ name: 'q', message: 'Search anime:' }])
   const query = (q||'').trim()
@@ -50,8 +56,20 @@ async function animeFlow(flags) {
   const episodes = await animeMod.getAllEpisodes(slug, cookie)
   if (!episodes || !episodes.length) { console.log('No episodes'); return }
 
-  const dest = path.join(process.cwd(), 'downloads')
-  ensureDir(dest)
+  let dest = flags.path || flags.out || (cfg && cfg.downloadPath) || core.determinePath && core.determinePath();
+  if (!dest) {
+    dest = path.join(__dirname, 'downloads');
+  }
+  let showFolder = '';
+  let seasonFolder = '';
+  const rawTitle = (anime && anime.title) || '';
+  const cleanedTitle = rawTitle.replace(/\(SS\s*\d+\)/i, '').trim();
+  const safeTitle = cleanedTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '');
+  if (flags.folder) {
+    showFolder = safeTitle;
+    dest = path.join(dest, showFolder);
+    ensureDir(dest);
+  }
 
   if (flags.wholeshow) {
     console.log('Queueing whole show:', anime.title)
@@ -113,17 +131,38 @@ async function animeFlow(flags) {
       if (!m3u8) { updateLine(idx, `Unable to download ep ${ep.episode}: no available stream`, anime, episodeList); continue; }
       try { if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(m3u8)) refer = 'https://kwik.cx'; } catch (e) {}
       const rawTitle = anime.title || slug;
-      const safeTitle = rawTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '');
-      const fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+      const cleanedTitle = rawTitle.replace(/\(SS\s*\d+\)/i, '').trim();
+      const safeTitle = cleanedTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '');
+      let fileName;
+      if (flags.folder) {
+        let epTitle = (ep.title || '').trim();
+        if (epTitle) {
+          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+        } else {
+          fileName = `E${String(ep.episode).padStart(2,'0')}`;
+        }
+      } else {
+        fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+      }
       const cfgCore = core.readConfig();
       const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode);
-      await downloader.download(dest, fileName, m3u8, refer, {
+      let episodeDest = dest;
+      await downloader.download(episodeDest, fileName, m3u8, refer, {
         recodeAudio: !!recode,
         progressCallback: (pct, msg) => {
           updateLine(idx, `[${'█'.repeat(Math.round((pct/100)*40)).padEnd(40,'-')}] ${pct.toFixed(1)}% ${msg||''}`, anime, episodeList);
         }
       });
       updateLine(idx, `[${'█'.repeat(40)}] 100% Done`, anime, episodeList);
+      if (flags.autoplay && !termux) {
+        try {
+          const open = require('open');
+          await open(path.join(dest, fileName + '.mp4'), { wait: false });
+        } catch (e) { /* ignore */ }
+      } else if (flags.autoplay && termux) {
+        console.log('Autoplay is not supported in Termux. Please open the file manually with mpv or your preferred player.');
+      }
     }
     return
   }
@@ -194,11 +233,24 @@ async function animeFlow(flags) {
       if (!m3u8) { console.log('Could not get stream for ep', ep.episode); continue }
       try { if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(m3u8)) refer = 'https://kwik.cx' } catch (e) {}
       const rawTitle = anime.title || slug
-      const safeTitle = rawTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
-      const fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`
+      const cleanedTitle = rawTitle.replace(/\(SS\s*\d+\)/i, '').trim();
+      const safeTitle = cleanedTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
+      let fileName;
+      if (flags.folder) {
+        let epTitle = (ep.title || '').trim();
+        if (epTitle) {
+          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+        } else {
+          fileName = `E${String(ep.episode).padStart(2,'0')}`;
+        }
+      } else {
+        fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+      }
       const cfgCore = core.readConfig()
       const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode)
-      await downloader.download(dest, fileName, m3u8, refer, { recodeAudio: !!recode })
+      let episodeDest = dest;
+      await downloader.download(episodeDest, fileName, m3u8, refer, { recodeAudio: !!recode })
     }
     return
   }
@@ -243,8 +295,20 @@ async function animeFlow(flags) {
     if (!m3u8) { console.log('Could not get stream for ep', ep.episode); continue }
     try { if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(m3u8)) refer = 'https://kwik.cx' } catch (e) {}
     const rawTitle = anime.title || slug
-    const safeTitle = rawTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
-    const fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`
+    const cleanedTitle = rawTitle.replace(/\(SS\s*\d+\)/i, '').trim();
+    const safeTitle = cleanedTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
+    let fileName;
+    if (flags.folder) {
+      let epTitle = (ep.title || '').trim();
+      if (epTitle) {
+        epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+        fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+      } else {
+        fileName = `E${String(ep.episode).padStart(2,'0')}`;
+      }
+    } else {
+      fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+    }
     const cfgCore = core.readConfig()
     const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode)
     await downloader.download(dest, fileName, m3u8, refer, { recodeAudio: !!recode })
@@ -287,11 +351,23 @@ async function seriesFlow(flags) {
           if (!data) continue
           const [decoded, subs] = await decodeUrl(data.file)
           let refer = decoded && /kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(decoded) ? 'https://kwik.cx' : 'https://flixhq.to'
-          const title = data.label || `S${seasonObj.title}E${ep.episode}`
-          const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '')
-          const dest = flags.path || flags.out || core.determinePath()
-          const recode = (flags.transcode || flags.recode) ? true : (cfg && cfg.autoTranscode)
-          await downloader.download(dest, safeTitle, decoded, refer, { recodeAudio: !!recode })
+          let fileName;
+          if (flags.folder) {
+            let epTitle = (ep.title || '').trim();
+            if (epTitle) {
+              epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+              fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+            } else {
+              fileName = `E${String(ep.episode).padStart(2,'0')}`;
+            }
+          } else {
+            const title = data.label || `S${seasonObj.title}E${ep.episode}`;
+            const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            fileName = safeTitle;
+          }
+          const dest = flags.path || flags.out || core.determinePath();
+          const recode = (flags.transcode || flags.recode) ? true : (cfg && cfg.autoTranscode);
+          await downloader.download(dest, fileName, decoded, refer, { recodeAudio: !!recode });
         } catch (e) { console.error('Failed download', e && e.message || e) }
       }
     }
@@ -324,9 +400,21 @@ async function seriesFlow(flags) {
       if (!data) { console.log('No data for ep'); continue }
       const [decoded, subs] = await decodeUrl(data.file)
       let refer = decoded && /kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(decoded) ? 'https://kwik.cx' : 'https://flixhq.to'
-      const title = data.label || `S${seasonIdx+1}E${t.episode || '??'}`
-      const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '')
-      await downloader.download(dest, safeTitle, decoded, refer, { recodeAudio: cfg && cfg.autoTranscode })
+      let fileName;
+      if (flags.folder) {
+        let epTitle = (t.title || '').trim();
+        if (epTitle) {
+          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          fileName = `E${String(t.episode).padStart(2,'0')}-${epTitle}`;
+        } else {
+          fileName = `E${String(t.episode).padStart(2,'0')}`;
+        }
+      } else {
+        const title = data.label || `S${seasonIdx+1}E${t.episode || '??'}`;
+        const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+        fileName = safeTitle;
+      }
+      await downloader.download(dest, fileName, decoded, refer, { recodeAudio: cfg && cfg.autoTranscode });
     } catch (e) { console.error('Failed:', e && e.message || e) }
   }
 }
@@ -425,20 +513,29 @@ async function main() {
   if (flags.anime) return await animeFlow(flags)
   if (flags.tv || flags.series || flags.mtv) return await seriesFlow(flags)
   if (flags.movie || flags.m) return await movieFlow(flags)
+  if (isTermux()) {
+    console.log('Termux detected: All features (download, playback, etc.) are supported if mpv/ffmpeg are installed. Autoplay is disabled by default.');
+  }
   console.log('Usage: dl [options]')
   console.log('  --anime           Download anime (interactive)')
   console.log('    --all           Download all episodes (batch)')
   console.log('    --aac           Re-encode audio to AAC')
-  console.log('    --out <dir>     Output directory')
+  console.log('    --out <dir>     Output directory (default: ./downloads)')
+  console.log('    --f, --folder   Organize downloads into a folder named after the anime, filenames like E05-Episode-Title.mp4')
   console.log('  --tv, --series    Download TV series (interactive)')
   console.log('    --all           Download all seasons/episodes')
   console.log('    --season <n>    Download only season n (repeatable)')
   console.log('    --ep <n>        Download only episode n (repeatable)')
   console.log('    --aac           Re-encode audio to AAC')
-  console.log('    --out <dir>     Output directory')
+  console.log('    --out <dir>     Output directory (default: ./downloads)')
+  console.log('    --f, --folder   Organize downloads into a folder named after the show, filenames like E05-Episode-Title.mp4')
   console.log('  --movie, -m       Download a movie (interactive)')
   console.log('    --aac           Re-encode audio to AAC')
-  console.log('    --out <dir>     Output directory')
+  console.log('    --out <dir>     Output directory (default: ./downloads)')
+  console.log('    --f, --folder   Organize download into a folder named after the movie')
+  console.log('')
+  console.log('With --folder, filenames are E{num}-{title}.mp4 if the episode/movie title is available, or just E{num}.mp4 otherwise. No show or season is included in the filename when --folder is used.')
+  console.log('If --out is not specified, downloads go to ./downloads by default.')
 }
 
 main().catch(e=>{ console.error(e && e.stack || e); process.exit(1) })
