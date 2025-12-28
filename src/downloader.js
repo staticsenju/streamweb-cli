@@ -153,21 +153,33 @@ async function download(destPath, name, url, referer, opts = {}) {
         } else if (showSpinner && opts.progressCallback) {
           opts.progressCallback(100, 'Done');
         }
+        try {
+          const tmp = outFile + '.recode.tmp.mp4';
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          const dir = path.dirname(outFile);
+          const base = path.basename(outFile);
+          const files = fs.readdirSync(dir);
+          files.forEach(f => {
+            if (f.startsWith(base) && (f.endsWith('.part') || f.endsWith('.tmp'))) {
+              try { fs.unlinkSync(path.join(dir, f)); } catch (e) {}
+            }
+          });
+        } catch (e) {}
         if (code === 0) {
           if (recodeAudio) {
             try {
-              const tmp = outFile + '.recode.tmp.mp4'
-              const rc = spawnSync(FFMPEG_EXECUTABLE, ['-y', '-hide_banner', '-loglevel', 'error', '-i', outFile, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', tmp], { stdio: 'ignore' })
+              const tmp = outFile + '.recode.tmp.mp4';
+              const rc = spawnSync(FFMPEG_EXECUTABLE, ['-y', '-hide_banner', '-loglevel', 'error', '-i', outFile, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', tmp], { stdio: 'ignore' });
               if (rc.status === 0) {
-                try { fs.renameSync(tmp, outFile) } catch (e) { /* ignore */ }
+                try { fs.renameSync(tmp, outFile); } catch (e) { /* ignore */ }
               } else {
-                try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp) } catch (e) {}
+                try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) {}
               }
             } catch (e) {}
           }
-          return resolve(outFile)
+          return resolve(outFile);
         }
-        const msg = errBuf || `yt-dlp exited with ${code}`
+        const msg = errBuf || `yt-dlp exited with ${code}`;
         return reject(new Error(msg))
       })
     })
