@@ -55,7 +55,6 @@ else
 		else
 			echo "Skipped node installation. Please install Node.js and re-run this script."; exit 1
 		fi
-	fia
 
 	if ! check_cmd npm; then
 		echo "npm not found even after node install. Aborting."; exit 1
