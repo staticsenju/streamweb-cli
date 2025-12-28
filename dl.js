@@ -8,6 +8,18 @@ const fs = require('fs')
 const animeMod = require('./src/anime')
 const core = require('./src/core')
 const downloader = require('./src/downloader')
+let activeTempFiles = []
+function cleanupTempFiles() {
+  if (activeTempFiles.length) {
+    for (const f of activeTempFiles) {
+      try { require('fs').existsSync(f) && require('fs').unlinkSync(f) } catch (e) {}
+    }
+    activeTempFiles = []
+  }
+}
+process.on('SIGINT', () => { cleanupTempFiles(); process.exit(130) })
+process.on('SIGTERM', () => { cleanupTempFiles(); process.exit(143) })
+process.on('exit', cleanupTempFiles)
 const { decodeUrl } = require('./src/utils')
 const axios = require('axios')
 const cheerio = (require('cheerio') && require('cheerio').default) ? require('cheerio').default : require('cheerio')
@@ -143,8 +155,16 @@ async function animeFlow(flags) {
       if (flags.folder) {
         let epTitle = (ep.title || '').trim();
         if (epTitle) {
-          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+          const match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
+          if (match) {
+            const epNum = match[2];
+            let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
+            rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+          } else {
+            epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+          }
         } else {
           fileName = `E${String(ep.episode).padStart(2,'0')}`;
         }
@@ -154,12 +174,15 @@ async function animeFlow(flags) {
       const cfgCore = core.readConfig();
       const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode);
       let episodeDest = dest;
+      let tempFile = require('path').join(episodeDest, require('sanitize-filename')(fileName) + '.mp4.part')
+      activeTempFiles.push(tempFile)
       await downloader.download(episodeDest, fileName, m3u8, refer, {
         recodeAudio: !!recode,
         progressCallback: (pct, msg) => {
           updateLine(idx, `[${'█'.repeat(Math.round((pct/100)*40)).padEnd(40,'-')}] ${pct.toFixed(1)}% ${msg||''}`, anime, episodeList);
         }
       });
+      activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
       updateLine(idx, `[${'█'.repeat(40)}] 100% Done`, anime, episodeList);
       if (flags.autoplay && !termux) {
         try {
@@ -361,8 +384,16 @@ async function seriesFlow(flags) {
           if (flags.folder) {
             let epTitle = (ep.title || '').trim();
             if (epTitle) {
-              epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-              fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+              const match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
+              if (match) {
+                const epNum = match[2];
+                let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
+                rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+                fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+              } else {
+                epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+                fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
+              }
             } else {
               fileName = `E${String(ep.episode).padStart(2,'0')}`;
             }
@@ -428,7 +459,10 @@ async function seriesFlow(flags) {
         const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
         fileName = safeTitle;
       }
+      let tempFile = require('path').join(dest, require('sanitize-filename')(fileName) + '.mp4.part')
+      activeTempFiles.push(tempFile)
       await downloader.download(dest, fileName, decoded, refer, { recodeAudio: cfg && cfg.autoTranscode });
+      activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
     } catch (e) { console.error('Failed:', e && e.message || e) }
   }
 }
@@ -518,7 +552,10 @@ async function movieFlow(flags) {
 
     const title = (displayTitle && displayTitle.trim()) ? displayTitle.trim() : (pageTitle && pageTitle.trim()) ? pageTitle.trim() : ((decoded && typeof decoded === 'string') ? path.basename(decoded).split('?')[0] : `movie_${mediaId}`);
     const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '').replace(/-+/g,'-').replace(/^-|-$/g,'');
+    let tempFile = require('path').join(dest, require('sanitize-filename')(safeTitle) + '.mp4.part')
+    activeTempFiles.push(tempFile)
     await downloader.download(dest, safeTitle, decoded, refer, { recodeAudio: !!recode });
+    activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
     console.log('Movie download complete — saved as', title + '.mp4');
 }
 
