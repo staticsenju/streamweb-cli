@@ -5,9 +5,8 @@ Streamweb-CLI is an interactive command-line downloader/player for anime, TV sho
 Quick features
 - Interactive search and selection for anime, TV series, and movies
 - Download or stream episodes and movies
-- Folder organization with `--f` and default `./downloads` output
+- Folder organization with `--f`
 - Subtitle fetching and automatic muxing with `--s`
-- Filename normalization and HTML entity decoding for safe filenames
 
 Requirements
 - Node.js 18+ (uses global fetch)
