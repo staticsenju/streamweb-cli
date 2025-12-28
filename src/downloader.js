@@ -50,6 +50,20 @@ async function download(destPath, name, url, referer, opts = {}) {
   if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true })
   const safe = sanitizeName(name)
   const outFile = path.join(destPath, `${safe}.mp4`)
+  const subtitles = opts.subtitles || [];
+  const subtitleFiles = [];
+  if (subtitles.length) {
+    for (let i = 0; i < subtitles.length; i++) {
+      try {
+        const subUrl = subtitles[i];
+        const ext = subUrl.includes('.vtt') ? '.vtt' : '.srt';
+        const subPath = path.join(destPath, `${safe}_sub${i+1}${ext}`);
+        const res = await axios.get(subUrl, { responseType: 'arraybuffer' });
+        fs.writeFileSync(subPath, res.data);
+        subtitleFiles.push(subPath);
+      } catch (e) { /* ignore subtitle download errors */ }
+    }
+  }
 
   const estimatedDuration = await estimateDurationFromM3U8(url, referer)
     let estimatedSize = 0;
@@ -74,6 +88,7 @@ async function download(destPath, name, url, referer, opts = {}) {
   })()
 
   if (useYtdlp) {
+    // yt-dlp may handle subtitles, but we handle muxing after download
     return await new Promise((resolve, reject) => {
       const args = ['-o', outFile, url, '--no-part', '--newline', '--concurrent-fragments', '64', '--fragment-retries', '10', '--retries', '10', '--socket-timeout', '60']
       if (referer) {
@@ -186,6 +201,9 @@ async function download(destPath, name, url, referer, opts = {}) {
     })
   }
 
+  let videoDownloaded = false;
+  let finalOutFile = outFile;
+  let videoFile = outFile;
   return await new Promise((resolve, reject) => {
     const headers = []
     if (referer) headers.push(`Referer: ${referer}`)
@@ -245,9 +263,34 @@ async function download(destPath, name, url, referer, opts = {}) {
       if (spinnerInterval) clearInterval(spinnerInterval);
       reject(err)
     })
-    ff.on('close', (code) => {
+    ff.on('close', async (code) => {
       if (spinnerInterval) clearInterval(spinnerInterval);
       if (code === 0) {
+        videoDownloaded = true;
+        if (subtitleFiles.length) {
+          try {
+            const muxedFile = outFile.replace(/\.mp4$/, '.muxed.mp4');
+            const ffmpegArgs = ['-y', '-i', outFile];
+            subtitleFiles.forEach(sub => {
+              ffmpegArgs.push('-i', sub);
+            });
+            ffmpegArgs.push('-map', '0:v', '-map', '0:a?');
+            for (let i = 0; i < subtitleFiles.length; i++) {
+              ffmpegArgs.push('-map', `${i+1}:0`);
+            }
+            ffmpegArgs.push('-c', 'copy');
+            ffmpegArgs.push('-c:s', 'mov_text');
+            for (let i = 0; i < subtitleFiles.length; i++) {
+              ffmpegArgs.push(`-metadata:s:s:${i}`, `language=und`);
+            }
+            ffmpegArgs.push(muxedFile);
+            const rc = spawnSync(FFMPEG_EXECUTABLE, ffmpegArgs, { stdio: 'ignore' });
+            if (rc.status === 0 && fs.existsSync(muxedFile)) {
+              try { fs.renameSync(muxedFile, outFile); } catch (e) {}
+              finalOutFile = outFile;
+            }
+          } catch (e) { /* ignore mux errors */ }
+        }
         if (recodeAudio) {
           try {
             const tmp = outFile + '.recode.tmp.mp4'
@@ -260,8 +303,14 @@ async function download(destPath, name, url, referer, opts = {}) {
           } catch (e) {}
         }
         try { cleanTempFilesFor(outFile) } catch (e) {}
-        resolve(outFile)
+        for (const sub of subtitleFiles) {
+          try { fs.unlinkSync(sub); } catch (e) {}
+        }
+        resolve(finalOutFile)
       } else {
+        for (const sub of subtitleFiles) {
+          try { fs.unlinkSync(sub); } catch (e) {}
+        }
         const msg = errBuf || `ffmpeg exited with ${code}`
         reject(new Error(msg))
       }
