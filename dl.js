@@ -8,24 +8,48 @@ const fs = require('fs')
 const animeMod = require('./src/anime')
 const core = require('./src/core')
 const downloader = require('./src/downloader')
-let activeTempFiles = []
-function cleanupTempFiles() {
-  if (activeTempFiles.length) {
-    for (const f of activeTempFiles) {
-      try { require('fs').existsSync(f) && require('fs').unlinkSync(f) } catch (e) {}
-    }
-    activeTempFiles = []
-  }
-}
-process.on('SIGINT', () => { cleanupTempFiles(); process.exit(130) })
-process.on('SIGTERM', () => { cleanupTempFiles(); process.exit(143) })
-process.on('exit', cleanupTempFiles)
 const { decodeUrl } = require('./src/utils')
 const axios = require('axios')
 const cheerio = (require('cheerio') && require('cheerio').default) ? require('cheerio').default : require('cheerio')
 
 const FLIXHQ_BASE_URL = 'https://flixhq.to'
 const FLIXHQ_AJAX_URL = `${FLIXHQ_BASE_URL}/ajax`
+const activeDownloads = []
+function sanitizeForFile(s) {
+  return String(s||'').replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
+}
+function registerDownload(dir, baseName) {
+  try {
+    const mp4 = require('path').join(dir, baseName + '.mp4')
+    const part = mp4 + '.part'
+    activeDownloads.push({ mp4, part, dir, baseName })
+    return { mp4, part }
+  } catch (e) { return {} }
+}
+function unregisterDownload(baseName) {
+  for (let i = activeDownloads.length - 1; i >= 0; i--) {
+    if (activeDownloads[i].baseName === baseName) activeDownloads.splice(i,1)
+  }
+}
+function cleanupDownloads() {
+  for (const d of activeDownloads) {
+    try { if (require('fs').existsSync(d.part)) require('fs').unlinkSync(d.part) } catch (e) {}
+    try { if (require('fs').existsSync(d.mp4)) require('fs').unlinkSync(d.mp4) } catch (e) {}
+    try {
+      const files = require('fs').readdirSync(d.dir)
+      for (const f of files) {
+        if (f.startsWith(d.baseName) && (f.endsWith('.part') || f.endsWith('.tmp'))) {
+          try { require('fs').unlinkSync(require('path').join(d.dir, f)) } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+  activeDownloads.length = 0
+}
+process.on('SIGINT', () => { cleanupDownloads(); process.exit(130) })
+process.on('SIGTERM', () => { cleanupDownloads(); process.exit(143) })
+process.on('SIGHUP', () => { cleanupDownloads(); process.exit(129) })
+process.on('exit', cleanupDownloads)
 function parseArgs() {
   const argv = process.argv.slice(2)
   const flags = {}
@@ -174,15 +198,16 @@ async function animeFlow(flags) {
       const cfgCore = core.readConfig();
       const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode);
       let episodeDest = dest;
-      let tempFile = require('path').join(episodeDest, require('sanitize-filename')(fileName) + '.mp4.part')
-      activeTempFiles.push(tempFile)
-      await downloader.download(episodeDest, fileName, m3u8, refer, {
-        recodeAudio: !!recode,
-        progressCallback: (pct, msg) => {
-          updateLine(idx, `[${'█'.repeat(Math.round((pct/100)*40)).padEnd(40,'-')}] ${pct.toFixed(1)}% ${msg||''}`, anime, episodeList);
-        }
-      });
-      activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
+      const _base = sanitizeForFile(fileName)
+      const _reg = registerDownload(episodeDest, _base)
+      try {
+        await downloader.download(episodeDest, fileName, m3u8, refer, {
+          recodeAudio: !!recode,
+          progressCallback: (pct, msg) => {
+            updateLine(idx, `[${'█'.repeat(Math.round((pct/100)*40)).padEnd(40,'-')}] ${pct.toFixed(1)}% ${msg||''}`, anime, episodeList);
+          }
+        });
+      } finally { unregisterDownload(_base) }
       updateLine(idx, `[${'█'.repeat(40)}] 100% Done`, anime, episodeList);
       if (flags.autoplay && !termux) {
         try {
@@ -196,93 +221,41 @@ async function animeFlow(flags) {
     return
   }
 
-  const epChoices = episodes.map((ep) => ({ name: `Episode ${ep.episode}${ep.filler? ' (filler)':''}`, value: ep }))
-  const { pick } = await inquirer.prompt([{ type: 'list', name: 'pick', message: 'Select episode or choose range', choices: [...epChoices, { name: 'Enter range (e.g. 1-5)', value: 'range' }], pageSize: Math.min(epChoices.length, cfg.pageSizeDefault || 20) }])
   let targets = []
-  if (pick === 'range') {
-    const { r } = await inquirer.prompt([{ name: 'r', message: 'Range:' }])
-    const pr = (r||'').trim()
-    if (pr.includes('-')) {
-      const [s,e] = pr.split('-',2).map(x=>parseInt(x,10))
-      for (let i=s;i<=e;i++) targets.push(episodes.find(ep=>Number(ep.episode)===i))
-    } else {
-      const n = parseInt(pr,10)
-      targets.push(episodes.find(ep=>Number(ep.episode)===n))
-    }
-    const rangeEpisodes = targets.filter(Boolean)
-    let allOpts = [];
-    for (const ep of rangeEpisodes) {
-      const playUrl = `https://animepahe.si/play/${encodeURIComponent(slug)}/${ep.session}`;
-      try {
-        const html = await axios.get(playUrl, { headers: { Referer: 'https://animepahe.si', Cookie: cookie } });
-        const $ = cheerio.load(html.data);
-        $('button[data-src]').each((_, el) => {
-          const e = $(el);
-          allOpts.push({ audio: (e.attr('data-audio')||'').toLowerCase(), resolution: e.attr('data-resolution')||'', src: e.attr('data-src')||'' });
-        });
-      } catch {}
-    }
-    const uniqAllOpts = Array.from(new Map(allOpts.map(o => [`${o.audio}|${o.resolution}`, o])).values());
-    const optChoices = uniqAllOpts.map((o, i) => ({ name: `${i+1}. Audio: ${o.audio} Resolution: ${o.resolution}`, value: o }));
-    let selectedOpt = null;
-    if (optChoices.length > 0) {
-      selectedOpt = (await inquirer.prompt([{ type: 'list', name: 'opt', message: `Select batch quality for range`, choices: optChoices }])).opt;
-    }
-    for (const ep of rangeEpisodes) {
-      let m3u8 = null;
-      let refer = 'https://animepahe.si';
-      let usedOpt = selectedOpt;
-      let epOpts = [];
-      try {
-        const playUrl = `https://animepahe.si/play/${encodeURIComponent(slug)}/${ep.session}`;
-        const html = await axios.get(playUrl, { headers: { Referer: 'https://animepahe.si', Cookie: cookie } });
-        const $ = cheerio.load(html.data);
-        $('button[data-src]').each((_, el) => {
-          const e = $(el);
-          epOpts.push({ audio: (e.attr('data-audio')||'').toLowerCase(), resolution: e.attr('data-resolution')||'', src: e.attr('data-src')||'' });
-        });
-      } catch {}
-      if (usedOpt) {
-        m3u8 = await animeMod.getEpisodeM3U8({ slug, episode: ep.episode, audio: usedOpt.audio, resolution: usedOpt.resolution, cookie });
-      }
-      if (!m3u8 && usedOpt) {
-        const lowerOpts = epOpts.filter(o => o.audio === usedOpt.audio && Number(o.resolution) < Number(usedOpt.resolution)).sort((a,b)=>Number(b.resolution)-Number(a.resolution));
-        for (const lowOpt of lowerOpts) {
-          m3u8 = await animeMod.getEpisodeM3U8({ slug, episode: ep.episode, audio: lowOpt.audio, resolution: lowOpt.resolution, cookie });
-          if (m3u8) { usedOpt = lowOpt; break; }
-        }
-      }
-      if (!m3u8 && epOpts.length) {
-        const sorted = epOpts.sort((a,b)=>Number(b.resolution)-Number(a.resolution));
-        for (const opt of sorted) {
-          m3u8 = await animeMod.getEpisodeM3U8({ slug, episode: ep.episode, audio: opt.audio, resolution: opt.resolution, cookie });
-          if (m3u8) { usedOpt = opt; break; }
-        }
-      }
-      if (!m3u8) { console.log('Could not get stream for ep', ep.episode); continue }
-      try { if (/kwik|owocdn|vidcloud|vault|vidcdn|vidstream/i.test(m3u8)) refer = 'https://kwik.cx' } catch (e) {}
-      const rawTitle = anime.title || slug
-      const cleanedTitle = rawTitle.replace(/\(SS\s*\d+\)/i, '').trim();
-      const safeTitle = cleanedTitle.replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '')
-      let fileName;
-      if (flags.folder) {
-        let epTitle = (ep.title || '').trim();
-        if (epTitle) {
-          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
-        } else {
-          fileName = `E${String(ep.episode).padStart(2,'0')}`;
+  if (flags.ep) {
+    let epnums = Array.isArray(flags.ep) ? flags.ep : [flags.ep]
+    for (const epnum of epnums) {
+      if (typeof epnum === 'string' && epnum.includes('-')) {
+        const [start, end] = epnum.split('-', 2).map(x => parseInt(x, 10))
+        for (let i = start; i <= end; i++) {
+          const found = episodes.find(ep => Number(ep.episode) === i)
+          if (found) targets.push(found)
         }
       } else {
-        fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+        const n = parseInt(epnum, 10)
+        const found = episodes.find(ep => Number(ep.episode) === n)
+        if (found) targets.push(found)
       }
-      const cfgCore = core.readConfig()
-      const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode)
-      let episodeDest = dest;
-      await downloader.download(episodeDest, fileName, m3u8, refer, { recodeAudio: !!recode })
     }
-    return
   }
+  if (!flags.ep || targets.length === 0) {
+    const epChoices = episodes.map((ep) => ({ name: `Episode ${ep.episode}${ep.filler? ' (filler)':''}`, value: ep }))
+    const { pick } = await inquirer.prompt([{ type: 'list', name: 'pick', message: 'Select episode or choose range', choices: [...epChoices, { name: 'Enter range (e.g. 1-5)', value: 'range' }], pageSize: Math.min(epChoices.length, cfg.pageSizeDefault || 20) }])
+    if (pick === 'range') {
+      const { r } = await inquirer.prompt([{ name: 'r', message: 'Range:' }])
+      const pr = (r||'').trim()
+      if (pr.includes('-')) {
+        const [s,e] = pr.split('-',2).map(x=>parseInt(x,10))
+        for (let i=s;i<=e;i++) targets.push(episodes.find(ep=>Number(ep.episode)===i))
+      } else {
+        const n = parseInt(pr,10)
+        targets.push(episodes.find(ep=>Number(ep.episode)===n))
+      }
+    } else {
+      targets.push(pick)
+    }
+  }
+  targets = targets.filter(Boolean)
   for (const ep of targets.filter(Boolean)) {
     let allOpts = [];
     const playUrl = `https://animepahe.si/play/${encodeURIComponent(slug)}/${ep.session}`;
@@ -340,7 +313,9 @@ async function animeFlow(flags) {
     }
     const cfgCore = core.readConfig()
     const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode)
-    await downloader.download(dest, fileName, m3u8, refer, { recodeAudio: !!recode })
+    const _base = sanitizeForFile(fileName)
+    registerDownload(dest, _base)
+    try { await downloader.download(dest, fileName, m3u8, refer, { recodeAudio: !!recode }) } finally { unregisterDownload(_base) }
   }
 }
 
@@ -404,7 +379,9 @@ async function seriesFlow(flags) {
           }
           const dest = flags.path || flags.out || core.determinePath();
           const recode = (flags.transcode || flags.recode) ? true : (cfg && cfg.autoTranscode);
-          await downloader.download(dest, fileName, decoded, refer, { recodeAudio: !!recode });
+          const _base = sanitizeForFile(fileName)
+          registerDownload(dest, _base)
+          try { await downloader.download(dest, fileName, decoded, refer, { recodeAudio: !!recode }); } finally { unregisterDownload(_base) }
         } catch (e) { console.error('Failed download', e && e.message || e) }
       }
     }
@@ -459,10 +436,9 @@ async function seriesFlow(flags) {
         const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
         fileName = safeTitle;
       }
-      let tempFile = require('path').join(dest, require('sanitize-filename')(fileName) + '.mp4.part')
-      activeTempFiles.push(tempFile)
-      await downloader.download(dest, fileName, decoded, refer, { recodeAudio: cfg && cfg.autoTranscode });
-      activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
+      const _base = sanitizeForFile(fileName)
+      registerDownload(dest, _base)
+      try { await downloader.download(dest, fileName, decoded, refer, { recodeAudio: cfg && cfg.autoTranscode }); } finally { unregisterDownload(_base) }
     } catch (e) { console.error('Failed:', e && e.message || e) }
   }
 }
@@ -552,10 +528,9 @@ async function movieFlow(flags) {
 
     const title = (displayTitle && displayTitle.trim()) ? displayTitle.trim() : (pageTitle && pageTitle.trim()) ? pageTitle.trim() : ((decoded && typeof decoded === 'string') ? path.basename(decoded).split('?')[0] : `movie_${mediaId}`);
     const safeTitle = title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '').replace(/-+/g,'-').replace(/^-|-$/g,'');
-    let tempFile = require('path').join(dest, require('sanitize-filename')(safeTitle) + '.mp4.part')
-    activeTempFiles.push(tempFile)
-    await downloader.download(dest, safeTitle, decoded, refer, { recodeAudio: !!recode });
-    activeTempFiles = activeTempFiles.filter(f => f !== tempFile)
+    const _base = sanitizeForFile(safeTitle)
+    registerDownload(dest, _base)
+    try { await downloader.download(dest, safeTitle, decoded, refer, { recodeAudio: !!recode }); } finally { unregisterDownload(_base) }
     console.log('Movie download complete — saved as', title + '.mp4');
 }
 
@@ -570,6 +545,7 @@ async function main() {
   console.log('Usage: dl [options]')
   console.log('  --anime           Download anime (interactive)')
   console.log('    --all           Download all episodes (batch)')
+  console.log('    --ep <n|n-n>    Download episode n or range n-n (repeatable)')
   console.log('    --aac           Re-encode audio to AAC')
   console.log('    --out <dir>     Output directory (default: ./downloads)')
   console.log('    --f, --folder   Organize downloads into a folder named after the anime, filenames like E05-Episode-Title.mp4')
