@@ -1,19 +1,22 @@
 # streamweb-cli
 
-Streamweb-CLI is a small interactive command-line tool that lets you search and stream (or download) anime, TV shows and movies from supported web sources. It combines two CLI flows:
+Streamweb-CLI is an interactive command-line downloader/player for anime, TV shows and movies from supported web sources.
 
-- Anime: search and play anime with episode/audio/resolution selection (mpv-based playback and resume support)
-- TV / Movies: search and play or download movies and TV episodes
+Quick features
+- Interactive search and selection for anime, TV series, and movies
+- Download or stream episodes and movies
+- Folder organization with `--f` and default `./downloads` output
+- Subtitle fetching and automatic muxing with `--s`
+- Filename normalization and HTML entity decoding for safe filenames
 
-## Requirements
+Requirements
+- Node.js 18+ (uses global fetch)
+- `ffmpeg` available in PATH (required for downloads and subtitle muxing)
+- `mpv` recommended for playback (optional)
+- `yt-dlp` optional (used when available for some downloads)
 
-- Node.js 18 or newer (global fetch is used)
-- mpv installed and available in your PATH (for playback)
-- ffmpeg installed and available in your PATH (for downloads/transmuxing)
-
-## Installation
-
-Clone the repository and install dependencies:
+Install
+Clone and install dependencies:
 
 ```bash
 git clone https://github.com/staticsenju/streamweb-cli.git
@@ -21,96 +24,66 @@ cd streamweb-cli
 npm install
 ```
 
-
-## CLI Usage
-
-You can run the main CLI:
+Run the included installers (optional)
+- Unix / WSL / Git Bash:
 
 ```bash
-streamweb-cli
+chmod +x ./install.sh
+./install.sh
 ```
 
-Or use the downloader directly:
+- Windows PowerShell (run as Administrator if installing system-wide):
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install.ps1
+```
+
+The install scripts attempt to install helper tools and create convenient shortcuts where appropriate. Review the scripts before running.
+
+Usage (downloader)
+- Run the interactive CLI:
 
 ```bash
-dl [options]
+node dl.js
 ```
 
-dl --anime           Download anime (interactive)
-	--all              Download all episodes (batch)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory
-dl --tv, --series    Download TV series (interactive)
-	--all              Download all seasons/episodes
-	--season <n>       Download only season n (repeatable)
-	--ep <n>           Download only episode n (repeatable)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory
-dl --movie, -m       Download a movie (interactive)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory
-dl --anime --all --out "./downloads"
-### dl CLI options
-
-```
-dl --anime           Download anime (interactive)
-	--all              Download all episodes (batch)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory (default: ./downloads)
-	--f, --folder      Organize downloads into a folder named after the anime, with filenames like E05-Episode-Title.mp4
-dl --tv, --series    Download TV series (interactive)
-	--all              Download all seasons/episodes
-	--season <n>       Download only season n (repeatable)
-	--ep <n>           Download only episode n (repeatable)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory (default: ./downloads)
-	--f, --folder      Organize downloads into a folder named after the show, with filenames like E05-Episode-Title.mp4
-dl --movie, -m       Download a movie (interactive)
-	--aac              Re-encode audio to AAC
-	--out <dir>        Output directory (default: ./downloads)
-	--f, --folder      Organize download into a folder named after the movie
-```
-
-Examples:
+- Or use the downloader entry directly:
 
 ```bash
-dl --anime --all --out "./downloads" --folder
-dl --tv --season 2 --ep 5 --out "./tv" --folder
-dl --movie --aac --folder
-## Output directory and filenames
-
-- If --out is not specified, downloads go to ./downloads by default.
-- With --folder, files are placed in a folder named after the show/movie/anime. Filenames are E{num}-{title}.mp4 if the episode/movie title is available, or just E{num}.mp4 otherwise. No show or season is included in the filename when --folder is used.
-
-dl --tv --season 2 --ep 5 --out "./tv"
-dl --movie --aac
+node dl.js --tv       # interactive TV series flow
+node dl.js --movie    # interactive movie flow
+node dl.js --anime    # interactive anime flow
 ```
 
-## Usage notes & tips
+Important flags
+- `--out <dir>` : output directory (default: `./downloads`)
+- `-f`, `--folder` : organize downloads into show/movie/anime folders (creates Show/Season structure for TV)
+- `--s` : fetch and mux available subtitle tracks into the output MP4
+- `--all` : download all episodes (where supported)
+- `--season <n>` / `--ep <n>` : select seasons/episodes in TV flow
 
-- Ensure `mpv` and `ffmpeg` are installed and available in your PATH.
-- If you run Node older than 18, install a fetch polyfill (e.g., `node-fetch`) and require it globally before using the CLI.
-- Downloads use ffmpeg with `-c copy` where possible to be fast; on some HLS sources ffmpeg may still re-encode segments.
-- If mpv is not installed the CLI will fall back to opening the stream URL in your default system opener.
+Examples
 
-## History & resume
+```bash
+node dl.js --tv --season 1 --ep 2 --f --s --out "./downloads"
+node dl.js --movie --f --s --out "./downloads"
+node dl.js --anime --all --f --out "./downloads"
+```
 
-- Each flow records history so you can resume where you left off. History files are limited to recent entries (100 by default).
-- The anime flow uses mpv's IPC when available to track playback position more accurately.
+What changed / New features
+- Subtitle support: use `--s` to download available subtitle tracks and mux them into the MP4 using `ffmpeg` (mov_text). Language metadata defaults to `und` when not available.
+- Filename fixes: HTML entities are decoded for display and filenames (e.g., `&amp;`, `&#39;`) and redundant fragments like `Episode-1` or duplicate dashes are removed.
+- Folder normalization: TV show slugs are cleaned (leading `watch` removed), show titles are title-cased for folders, and `--f` now creates Show/Season directories immediately when used interactively.
+- Cleanup: temporary fragments and subtitle files are removed after successful muxing and on interrupts (Ctrl+C).
 
-## Troubleshooting
+Notes & troubleshooting
+- Ensure `ffmpeg` is in PATH. If subtitles aren't embedded, check the CLI log for the `ffmpeg` mux step output.
+- On Windows, run PowerShell with `ExecutionPolicy` bypass as shown above to run `install.ps1`.
+- If a download is interrupted, temporary files are cleaned where possible; partial `.mp4` files may remain if ffmpeg fails  check the logs.
 
-- If playback doesn't start, confirm `mpv` is installed and in PATH. On Linux use your package manager (apt, dnf, pacman).
-- If downloads fail, verify `ffmpeg` is installed and supports HLS input.
+Reporting issues
+- Open an issue with logs and a short description of the problem. Include the command you ran and the target folder listing.
 
-## Contributing
-
-If you want to improve this tool, open issues or PRs on the repository. Small improvements I recommend:
-
-- Add more robust decoder/embedding support for different providers
-- Add a fetch polyfill and a lightweight install guide for older Node versions
-- Add unit tests for scraping/parsing helpers
-
-## License
-
-This repository is provided under the MIT license (see LICENSE file).
+License
+- MIT
