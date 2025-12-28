@@ -60,6 +60,9 @@ async function animeFlow(flags) {
   if (!dest) {
     dest = path.join(__dirname, 'downloads');
   }
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
   let showFolder = '';
   let seasonFolder = '';
   const rawTitle = (anime && anime.title) || '';
