@@ -260,3 +260,5 @@ else
 	echo "Please close and re-open your terminal (Bash/WSL/Git Bash/PowerShell/CMD) to use 'streamweb-cli'."
 	echo "Done. You can now run 'streamweb-cli' from anywhere after restarting your shell."
 fi
+
+exit 0
