@@ -178,22 +178,23 @@ async function animeFlow(flags) {
       let fileName;
       if (flags.folder) {
         let epTitle = (ep.title || '').trim();
-        if (epTitle) {
-          const match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
-          if (match) {
-            const epNum = match[2];
-            let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
-            rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-            fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
-          } else {
-            epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-            fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
-          }
+        let match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
+        if (epTitle && match) {
+          const epNum = match[2];
+          let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
+          rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+        } else if (epTitle) {
+          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+          fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
         } else {
-          fileName = `E${String(ep.episode).padStart(2,'0')}`;
+          let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+          fileName = epNum ? `E${epNum}` : 'E';
         }
       } else {
-        fileName = `${safeTitle}_E${String(ep.episode).padStart(2,'0')}`;
+        let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+        fileName = epNum ? `${safeTitle}_E${epNum}` : safeTitle;
       }
       const cfgCore = core.readConfig();
       const recode = (flags.transcode || flags.recode) ? true : (cfgCore && cfgCore.autoTranscode);
@@ -358,19 +359,19 @@ async function seriesFlow(flags) {
           let fileName;
           if (flags.folder) {
             let epTitle = (ep.title || '').trim();
-            if (epTitle) {
-              const match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
-              if (match) {
-                const epNum = match[2];
-                let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
-                rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-                fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
-              } else {
-                epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-                fileName = `E${String(ep.episode).padStart(2,'0')}-${epTitle}`;
-              }
+            let match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
+            if (epTitle && match) {
+              const epNum = match[2];
+              let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
+              rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+              fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+            } else if (epTitle) {
+              epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+              let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+              fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
             } else {
-              fileName = `E${String(ep.episode).padStart(2,'0')}`;
+              let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+              fileName = epNum ? `E${epNum}` : 'E';
             }
           } else {
             const title = data.label || `S${seasonObj.title}E${ep.episode}`;
@@ -425,11 +426,19 @@ async function seriesFlow(flags) {
       let fileName;
       if (flags.folder) {
         let epTitle = (t.title || '').trim();
-        if (epTitle) {
+        let match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
+        if (epTitle && match) {
+          const epNum = match[2];
+          let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
+          rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+          fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+        } else if (epTitle) {
           epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          fileName = `E${String(t.episode).padStart(2,'0')}-${epTitle}`;
+          let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
+          fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
         } else {
-          fileName = `E${String(t.episode).padStart(2,'0')}`;
+          let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
+          fileName = epNum ? `E${epNum}` : 'E';
         }
       } else {
         const title = data.label || `S${seasonIdx+1}E${t.episode || '??'}`;
