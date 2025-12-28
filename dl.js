@@ -56,12 +56,15 @@ async function animeFlow(flags) {
   const episodes = await animeMod.getAllEpisodes(slug, cookie)
   if (!episodes || !episodes.length) { console.log('No episodes'); return }
 
-  let dest = flags.path || flags.out || (cfg && cfg.downloadPath) || core.determinePath && core.determinePath();
+  let dest = flags.path || flags.out || (cfg && cfg.downloadPath) || (core.determinePath && core.determinePath());
   if (!dest) {
     dest = path.join(__dirname, 'downloads');
   }
-  if (!fs.existsSync(dest)) {
+  try {
     fs.mkdirSync(dest, { recursive: true });
+  } catch (e) {
+    console.error('Failed to create output directory:', dest, e.message || e);
+    process.exit(1);
   }
   let showFolder = '';
   let seasonFolder = '';
@@ -395,8 +398,16 @@ async function seriesFlow(flags) {
     }
   } else targets.push(eps[epSelect])
 
-  const dest = core.determinePath()
-  ensureDir(dest)
+  let dest = flags.path || flags.out || (cfg && cfg.downloadPath) || (core.determinePath && core.determinePath());
+  if (!dest) {
+    dest = path.join(__dirname, 'downloads');
+  }
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+  } catch (e) {
+    console.error('Failed to create output directory:', dest, e.message || e);
+    process.exit(1);
+  }
   for (const t of targets.filter(Boolean)) {
     try {
       const data = await core.getEpisodeData(t, seasonIdx+1, t.episode || (epChoices.indexOf(t)+1))
