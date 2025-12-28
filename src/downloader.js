@@ -1,4 +1,4 @@
-function sanitizeName(name) {
+  function sanitizeName(name) {
   return String(name).replace(/\s+/g, '-').replace(/"/g, '').replace(/[^a-zA-Z0-9\-_.]/g, '');
 }
 const fs = require('fs')
@@ -177,6 +177,7 @@ async function download(destPath, name, url, referer, opts = {}) {
               }
             } catch (e) {}
           }
+          try { cleanTempFilesFor(outFile) } catch (e) {}
           return resolve(outFile);
         }
         const msg = errBuf || `yt-dlp exited with ${code}`;
@@ -258,6 +259,7 @@ async function download(destPath, name, url, referer, opts = {}) {
             }
           } catch (e) {}
         }
+        try { cleanTempFilesFor(outFile) } catch (e) {}
         resolve(outFile)
       } else {
         const msg = errBuf || `ffmpeg exited with ${code}`
@@ -265,6 +267,26 @@ async function download(destPath, name, url, referer, opts = {}) {
       }
     })
   })
+}
+
+function cleanTempFilesFor(outFile) {
+  try {
+    const dir = path.dirname(outFile)
+    const base = path.basename(outFile)
+    const candidates = [base + '.part', base + '.tmp', base + '.recode.tmp.mp4']
+    for (const c of candidates) {
+      const p = path.join(dir, c)
+      try { if (fs.existsSync(p)) fs.unlinkSync(p) } catch (e) {}
+    }
+    try {
+      const files = fs.readdirSync(dir)
+      for (const f of files) {
+        if (f.startsWith(base) && (f.endsWith('.part') || f.endsWith('.tmp'))) {
+          try { fs.unlinkSync(path.join(dir, f)) } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  } catch (e) {}
 }
 
 module.exports = { download }
