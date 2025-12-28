@@ -5,8 +5,9 @@ Streamweb-CLI is an interactive command-line downloader/player for anime, TV sho
 Quick features
 - Interactive search and selection for anime, TV series, and movies
 - Download or stream episodes and movies
-- Folder organization with `--f`
+- Folder organization with `--f` and default `./downloads` output
 - Subtitle fetching and automatic muxing with `--s`
+- Filename normalization and HTML entity decoding for safe filenames
 
 Requirements
 - Node.js 18+ (uses global fetch)
@@ -40,11 +41,22 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 The install scripts attempt to install helper tools and create convenient shortcuts where appropriate. Review the scripts before running.
 
+Usage (player/stream)
+- Run the interactive player/streaming CLI:
+
+```bash
+node index.js
+streamweb-cli # run ./install.sh or install.ps1 beforehand
+```
+
+This launches the streaming/player flow which uses `mpv` when available for playback and supports resume tracking where supported.
+
 Usage (downloader)
-- Run the interactive CLI:
+- Run the interactive downloader CLI:
 
 ```bash
 node dl.js
+dl # run ./install.sh or install.ps1 beforehand
 ```
 
 - Or use the downloader entry directly:
