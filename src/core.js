@@ -64,7 +64,7 @@ if (typeof _cfg.downloadPath !== 'string') _cfg.downloadPath = ''
 if (typeof _cfg.pageSizeDefault !== 'number') _cfg.pageSizeDefault = 20
 writeConfig(_cfg)
 
-async function searchContent(query) {
+async function searchContent(query, type) {
   const params = query.replace(/\s+/g, '-')
   const url = `${FLIXHQ_SEARCH_URL}/${params}`
   const resp = await axios.get(url, { headers: { 'User-Agent': `flix-cli/1.0.0` } })
@@ -81,11 +81,19 @@ async function searchContent(query) {
     const titleElem = $(el).find('.film-detail h2.film-name a')
     const info = $(el).find('.fd-infor span')
     const title = titleElem.attr('title') || titleElem.text() || 'Unknown Title'
-    let display = `${i + 1}. ${title}`
+    const href = new URL(poster.attr('href') || '', FLIXHQ_BASE_URL).toString()
+    let itemType = 'unknown'
+    try { if (href.includes('/movie/')) itemType = 'movie'; else if (href.includes('/tv/')) itemType = 'series' } catch (e) {}
+    if (type && itemType !== type) return
+    let display = `${results.length + 1}. ${title}`
     if (info && info.length) display += ` (${$(info[0]).text().trim()})`
     results.push(display)
-    urls.push(new URL(poster.attr('href') || '', FLIXHQ_BASE_URL).toString())
+    urls.push(href)
   })
+  if (!results.length) {
+    console.log(type ? `No ${type} results found for '${query}'` : 'No results found')
+    return null
+  }
   const cfg = readConfig()
   const pageSize = Math.min(results.length, (cfg.pageSizeDefault || 20))
   const choice = await inquirer.prompt([{ type: 'list', name: 'sel', message: 'Select', choices: results, pageSize }])
@@ -288,6 +296,11 @@ async function dlData(dest = null, query = 'download') {
       recodeAudio: cfg && cfg.autoTranscode,
       subtitles: subs
     })
+    // Clean up temp fragments after movie download
+    try {
+      const outFile = path.join(basePath, name + '.mp4');
+      if (downloader.cleanTempFilesFor) downloader.cleanTempFilesFor(outFile);
+    } catch (e) {}
     console.log(`Successfully downloaded: ${ep.label}`)
   }
 }
