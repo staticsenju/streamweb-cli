@@ -181,13 +181,26 @@ async function animeFlow(flags) {
         let match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
         if (epTitle && match) {
           const epNum = match[2];
-          let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
-          rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+          let rest = epTitle.replace(match[0], '');
+          rest = rest.replace(/^[-\s]+/, '');
+          rest = rest.replace(/^[-]+/, '');
+          if (flags.folderName) {
+            rest = rest.replace(/[^a-zA-Z0-9 \-_.]/g, '');
+            fileName = rest ? `E${epNum} ${rest}` : `E${epNum}`;
+          } else {
+            rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+          }
         } else if (epTitle) {
-          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
-          fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
+          if (flags.folderName) {
+            epTitle = epTitle.replace(/[^a-zA-Z0-9 \-_.]/g, '');
+            let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+            fileName = epNum ? `E${epNum} ${epTitle}` : epTitle;
+          } else {
+            epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
+            fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
+          }
         } else {
           let epNum = (ep.episode != null && ep.episode !== undefined) ? String(ep.episode).padStart(2,'0') : '';
           fileName = epNum ? `E${epNum}` : 'E';
@@ -429,13 +442,26 @@ async function seriesFlow(flags) {
         let match = epTitle.match(/^(Ep|Eps)[-\s]*([0-9]+)/i);
         if (epTitle && match) {
           const epNum = match[2];
-          let rest = epTitle.replace(match[0], '').replace(/^[-\s]+/, '');
-          rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+          let rest = epTitle.replace(match[0], '');
+          rest = rest.replace(/^[-\s]+/, '');
+          rest = rest.replace(/^[-]+/, '');
+          if (flags.folderName) {
+            rest = rest.replace(/[^a-zA-Z0-9 \-_.]/g, '');
+            fileName = rest ? `E${epNum} ${rest}` : `E${epNum}`;
+          } else {
+            rest = rest.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            fileName = rest ? `E${epNum}-${rest}` : `E${epNum}`;
+          }
         } else if (epTitle) {
-          epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
-          let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
-          fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
+          if (flags.folderName) {
+            epTitle = epTitle.replace(/[^a-zA-Z0-9 \-_.]/g, '');
+            let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
+            fileName = epNum ? `E${epNum} ${epTitle}` : epTitle;
+          } else {
+            epTitle = epTitle.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_.]/g, '');
+            let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
+            fileName = epNum ? `E${epNum}-${epTitle}` : epTitle;
+          }
         } else {
           let epNum = (t.episode != null && t.episode !== undefined) ? String(t.episode).padStart(2,'0') : '';
           fileName = epNum ? `E${epNum}` : 'E';
