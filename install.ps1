@@ -15,7 +15,8 @@ function Ensure-Scoop {
     if ($ans -match '^[Yy]') {
         try {
             Write-Host "Installing Scoop..."
-            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+            # FIX: Added -ErrorAction SilentlyContinue to prevent crashes if policy is managed by Admin/GPO
+            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
             Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
             
             Refresh-Env
