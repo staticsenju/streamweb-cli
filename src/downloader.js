@@ -8,7 +8,12 @@ const axios = require('axios')
 
 const DEFAULT_UA = process.env.STREAMWEB_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
-const FFMPEG_EXECUTABLE = process.env.FFMPEG_PATH || 'ffmpeg'
+// Detect if running as pkg executable
+const isPkg = typeof process.pkg !== 'undefined'
+const binDir = isPkg ? path.join(path.dirname(process.execPath), 'bin') : null
+
+const FFMPEG_EXECUTABLE = process.env.FFMPEG_PATH || (isPkg && binDir ? path.join(binDir, 'ffmpeg.exe') : 'ffmpeg')
+const YTDLP_EXECUTABLE = isPkg && binDir ? path.join(binDir, 'yt-dlp.exe') : 'yt-dlp'
 
 async function estimateDurationFromM3U8(url, referer) {
   try {
@@ -53,11 +58,14 @@ async function download(destPath, name, url, referer, opts = {}) {
   const subtitles = opts.subtitles || [];
   const subtitleFiles = [];
   if (subtitles.length) {
+    const subsDir = path.join(destPath, 'subtitles')
+    if (!fs.existsSync(subsDir)) fs.mkdirSync(subsDir, { recursive: true })
+
     for (let i = 0; i < subtitles.length; i++) {
       try {
         const subUrl = subtitles[i];
         const ext = subUrl.includes('.vtt') ? '.vtt' : '.srt';
-        const subPath = path.join(destPath, `${safe}_sub${i+1}${ext}`);
+        const subPath = path.join(subsDir, `${safe}_sub${i+1}${ext}`);
         const res = await axios.get(subUrl, { responseType: 'arraybuffer' });
         fs.writeFileSync(subPath, res.data);
         subtitleFiles.push(subPath);
@@ -82,7 +90,7 @@ async function download(destPath, name, url, referer, opts = {}) {
 
   const useYtdlp = (() => {
     try {
-      const r = spawnSync('yt-dlp', ['--version'], { stdio: 'ignore' })
+      const r = spawnSync(YTDLP_EXECUTABLE, ['--version'], { stdio: 'ignore' })
       return r.status === 0
     } catch (e) { return false }
   })()
@@ -98,7 +106,7 @@ async function download(destPath, name, url, referer, opts = {}) {
       args.push('--add-header'); args.push(`User-Agent: ${DEFAULT_UA}`)
       for (const k of Object.keys(extraHeaders)) { args.push('--add-header'); args.push(`${k}: ${extraHeaders[k]}`) }
       if (!opts.progressCallback) { try { process.stdout.write(`Downloading ${safe}...\n`) } catch (e) {} }
-      const ytd = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      const ytd = spawn(YTDLP_EXECUTABLE, args, { stdio: ['ignore', 'pipe', 'pipe'] })
       let errBuf = ''
       let outBuf = ''
       let totalFrags = null
@@ -208,7 +216,7 @@ async function download(destPath, name, url, referer, opts = {}) {
             } catch (e) {}
           }
           try { cleanTempFilesFor(outFile) } catch (e) {}
-          return resolve(outFile);
+          return resolve({ file: outFile, subtitles: subtitleFiles });
         }
         const msg = errBuf || `yt-dlp exited with ${code}`;
         return reject(new Error(msg))
@@ -312,16 +320,9 @@ async function download(destPath, name, url, referer, opts = {}) {
           } catch (e) {}
         }
         try { cleanTempFilesFor(outFile) } catch (e) {}
-        
-        for (const sub of subtitleFiles) {
-          try { fs.unlinkSync(sub); } catch (e) {}
-        }
-        resolve(finalOutFile)
+
+        resolve({ file: finalOutFile, subtitles: subtitleFiles })
       } else {
-        
-        for (const sub of subtitleFiles) {
-          try { fs.unlinkSync(sub); } catch (e) {}
-        }
         const msg = errBuf || `ffmpeg exited with ${code}`
         reject(new Error(msg))
       }
