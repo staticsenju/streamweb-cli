@@ -7,7 +7,7 @@ const os = require('os')
 const path = require('path')
 const fs = require('fs')
 const downloader = require('./downloader')
-const inquirer = (require('inquirer') && require('inquirer').default) ? require('inquirer').default : require('inquirer')
+const inquirer = require('inquirer')
 
 const CACHE_ROOT = path.join(os.tmpdir(), 'ap-transmux')
 fs.mkdirSync(CACHE_ROOT, { recursive: true })
