@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-const inquirer = (require('inquirer') && require('inquirer').default) ? require('inquirer').default : require('inquirer')
+const inquirer = require('inquirer')
+
 async function mainMenu() {
   while (true) {
-    const choice = await inquirer.prompt([{ type: 'list', name: 'sel', message: 'What do you want to watch today ?', choices: ['Anime', 'TV / Movies', 'Exit'] }])
+    const choice = await inquirer.prompt([{ type: 'list', name: 'sel', message: 'What do you want to watch today?', choices: ['Anime', 'TV / Movies', 'Exit'] }])
     if (choice.sel === 'Exit') return process.exit(0)
     if (choice.sel === 'Anime') {
       const anime = require('./src/anime')
