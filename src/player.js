@@ -1,17 +1,31 @@
 const child_process = require('child_process')
-const _open = require('open')
-const open = (_open && _open.default) ? _open.default : _open
+const open = require('open')
 const os = require('os')
 const path = require('path')
 const fs = require('fs')
 
+// Detect if running as pkg executable
+const isPkg = typeof process.pkg !== 'undefined'
+const binDir = isPkg ? path.join(path.dirname(process.execPath), 'bin') : null
+const MPV_EXECUTABLE = isPkg && binDir ? path.join(binDir, 'mpv.exe') : 'mpv'
+
 async function play(url, title, base, subs) {
-  console.log(`Opening ${title} -> ${url}`)
+  console.log(`Opening ${title}...`)
+  console.log(`Loading stream with enhanced buffering...`)
   try {
     const args = []
     if (Array.isArray(subs) && subs.length) {
       for (const s of subs) args.push(`--sub-file=${s}`)
     }
+
+    args.push('--cache=yes')
+    args.push('--demuxer-max-bytes=200M')
+    args.push('--demuxer-max-back-bytes=100M')
+    args.push('--cache-secs=30')
+    args.push('--stream-buffer-size=4M')
+    args.push('--network-timeout=60')
+    args.push('--hls-bitrate=max')
+
     args.push('--fullscreen')
     let sockPath
     if (process.platform === 'win32') sockPath = `\\.\pipe\streamweb-mpv-${process.pid}-${Date.now()}`
@@ -24,7 +38,7 @@ async function play(url, title, base, subs) {
     args.unshift(`--input-ipc-server=${sockPath}`)
     args.push(url)
 
-    const mpv = child_process.spawn('mpv', args, { stdio: ['ignore','pipe','pipe'] })
+    const mpv = child_process.spawn(MPV_EXECUTABLE, args, { stdio: ['ignore','pipe','pipe'] })
 
     let userStopMode = null
     if (mpv.stdout) mpv.stdout.on('data', d => {
